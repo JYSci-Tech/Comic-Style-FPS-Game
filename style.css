@@ -1,0 +1,720 @@
+:root {
+  --ink: #0f0f14;
+  --paper: #fff8e7;
+  --yellow: #ffe01b;
+  --red: #ff2a44;
+  --cyan: #00e5ff;
+  --magenta: #ff2ebd;
+  --orange: #ff7a00;
+  --green: #38e54d;
+  --font-display: "Impact", "Arial Black", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-body: "Trebuchet MS", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #100e16;
+  font-family: var(--font-body);
+  color: var(--ink);
+}
+
+#game-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #0d0d12;
+}
+
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* 高清 2D 漫画特效覆盖层（3D投影拟声词、速度线、准星动态反馈） */
+#fx-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* 漫画边框与角落半调网点 */
+.comic-frame-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 7px solid var(--ink);
+  box-shadow: inset 0 0 0 2px rgba(255, 248, 231, 0.85), inset 0 0 70px rgba(0, 0, 0, 0.35);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.12) 1px, transparent 1px);
+  background-size: 9px 9px;
+  mask-image: radial-gradient(circle at center, transparent 58%, black 100%);
+  -webkit-mask-image: radial-gradient(circle at center, transparent 58%, black 100%);
+  z-index: 4;
+}
+
+.damage-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, transparent 40%, rgba(255, 24, 52, 0.82) 100%);
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  z-index: 5;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* 通用漫画框 */
+.comic-box {
+  background: var(--paper);
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  padding: 8px 12px;
+  position: relative;
+}
+
+/* ================= HUD ================= */
+.hud {
+  position: absolute;
+  inset: 14px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.hud-top-left {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.issue-badge {
+  background: var(--yellow);
+  transform: skewX(-6deg);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.issue-tag {
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-display);
+  padding: 2px 8px;
+  border: 3px solid var(--ink);
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+.issue-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: var(--ink);
+}
+
+.combo-badge {
+  background: var(--magenta);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 1.5px;
+  transform: rotate(-3deg);
+  width: fit-content;
+  text-shadow: 2px 2px 0 var(--ink);
+  animation: popBounce 0.25s ease-out;
+}
+
+@keyframes popBounce {
+  0% { transform: scale(1.4) rotate(-6deg); }
+  100% { transform: scale(1) rotate(-3deg); }
+}
+
+.hud-top-center {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.objective-box {
+  background: #fff;
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: 1px;
+  padding: 6px 16px;
+}
+
+.objective-box span {
+  color: var(--red);
+  font-size: 20px;
+}
+
+.boss-bar-box {
+  width: 360px;
+  background: var(--ink);
+  color: var(--yellow);
+  padding: 6px 10px;
+  border-color: var(--yellow);
+}
+
+.boss-name {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.boss-track {
+  height: 16px;
+  background: #2b2430;
+  border: 2px solid #fff;
+}
+
+.boss-fill {
+  background: linear-gradient(90deg, var(--red), var(--magenta));
+  width: 100%;
+}
+
+.hud-top-right {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.score-box {
+  background: var(--cyan);
+  text-align: right;
+  min-width: 112px;
+  transform: skewX(-4deg);
+}
+
+.score-box .label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.score-box .value {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.minimap-box {
+  padding: 4px;
+  background: var(--ink);
+}
+
+#minimap-canvas {
+  display: block;
+  background: #171722;
+}
+
+/* 动态准星 */
+.crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  transition: transform 0.08s ease-out;
+}
+
+.crosshair.ads {
+  transform: translate(-50%, -50%) scale(0.55);
+}
+
+.ch-line {
+  position: absolute;
+  background: var(--yellow);
+  border: 1.5px solid var(--ink);
+}
+
+.ch-top { width: 4px; height: 10px; left: 16px; top: 0; }
+.ch-bottom { width: 4px; height: 10px; left: 16px; bottom: 0; }
+.ch-left { width: 10px; height: 4px; left: 0; top: 16px; }
+.ch-right { width: 10px; height: 4px; right: 0; top: 16px; }
+.ch-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  left: 16px;
+  top: 16px;
+  background: var(--red);
+  border-radius: 50%;
+}
+
+.hitmarker {
+  position: absolute;
+  inset: -4px;
+  opacity: 0;
+  transition: opacity 0.08s ease-out;
+}
+
+.hitmarker::before,
+.hitmarker::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 4px;
+  background: var(--red);
+  border: 1px solid #fff;
+}
+
+.hitmarker::before { transform: translate(-50%, -50%) rotate(45deg); }
+.hitmarker::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.hitmarker.active { opacity: 1; }
+.hitmarker.crit::before,
+.hitmarker.crit::after {
+  background: var(--yellow);
+  width: 36px;
+  height: 5px;
+}
+
+/* 底部左 */
+.hud-bottom-left {
+  position: absolute;
+  bottom: 26px;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.portrait-box {
+  padding: 4px;
+  background: var(--yellow);
+  transform: rotate(-2deg);
+}
+
+#portrait-canvas {
+  display: block;
+}
+
+.stats-box {
+  min-width: 225px;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stat-label {
+  font-family: var(--font-display);
+  font-size: 14px;
+  width: 42px;
+}
+
+.bar-track {
+  flex: 1;
+  height: 16px;
+  background: #232028;
+  border: 3px solid var(--ink);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  transition: width 0.1s ease-out;
+}
+
+.hp-fill {
+  background: linear-gradient(90deg, #ff2a44, #ff6b2b);
+  width: 100%;
+}
+
+.dash-fill {
+  background: linear-gradient(90deg, #00b8ff, #00ffe1);
+  width: 100%;
+}
+
+.stat-num {
+  font-family: var(--font-display);
+  font-size: 15px;
+  width: 36px;
+  text-align: right;
+}
+
+/* 底部右 */
+.hud-bottom-right {
+  position: absolute;
+  bottom: 26px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.weapon-slots {
+  display: flex;
+  gap: 6px;
+}
+
+.w-slot {
+  background: #232028;
+  color: #ddd;
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  padding: 3px 8px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.w-slot.active {
+  background: var(--yellow);
+  color: var(--ink);
+  transform: translateY(-3px);
+}
+
+.ammo-box {
+  background: var(--yellow);
+  min-width: 200px;
+  text-align: right;
+  transform: skewX(-5deg);
+}
+
+.weapon-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: var(--red);
+}
+
+.ammo-readout {
+  font-family: var(--font-display);
+  font-size: 38px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.ammo-sep {
+  font-size: 24px;
+  margin: 0 2px;
+}
+
+.reload-hint {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: #fff;
+  background: var(--red);
+  display: inline-block;
+  padding: 1px 6px;
+  margin-top: 3px;
+  border: 2px solid var(--ink);
+}
+
+.controls-strip {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 15, 18, 0.88);
+  color: var(--paper);
+  font-size: 12px;
+  padding: 3px 14px;
+  border: 2px solid var(--yellow);
+  white-space: nowrap;
+}
+
+/* XIII风格 3格漫画连环击杀弹窗 */
+.kill-panels {
+  position: absolute;
+  top: 82px;
+  left: 24px;
+  display: flex;
+  gap: 8px;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.kill-panel {
+  width: 102px;
+  height: 78px;
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 21px;
+  color: #fff;
+  text-shadow: 3px 3px 0 var(--ink);
+  transform: scale(0);
+  opacity: 0;
+}
+
+.kill-panels.show .kp-1 {
+  background: radial-gradient(circle, var(--yellow) 25%, var(--orange) 100%);
+  animation: panelPop 0.95s forwards;
+}
+
+.kill-panels.show .kp-2 {
+  background: radial-gradient(circle, var(--red) 30%, #990022 100%);
+  animation: panelPop 0.95s 0.1s forwards;
+}
+
+.kill-panels.show .kp-3 {
+  background: radial-gradient(circle, var(--cyan) 30%, #0066cc 100%);
+  animation: panelPop 0.95s 0.2s forwards;
+}
+
+@keyframes panelPop {
+  0% { transform: scale(0.2) rotate(-12deg); opacity: 0; }
+  20% { transform: scale(1.1) rotate(-3deg); opacity: 1; }
+  80% { transform: scale(1) rotate(-2deg); opacity: 1; }
+  100% { transform: scale(0.95) translateY(-10px); opacity: 0; }
+}
+
+/* ================= 菜单与封面 ================= */
+.overlay-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(rgba(255, 224, 27, 0.14) 2px, transparent 2px),
+    linear-gradient(135deg, rgba(16, 13, 28, 0.84), rgba(40, 12, 32, 0.84));
+  background-size: 16px 16px, 100% 100%;
+  padding: 20px;
+}
+
+.comic-cover {
+  width: min(840px, 95vw);
+  background: var(--paper);
+  border: 6px solid var(--ink);
+  box-shadow: 12px 12px 0 var(--ink);
+  padding: 22px 26px;
+  position: relative;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.08) 1.5px, transparent 1.5px);
+  background-size: 10px 10px;
+}
+
+.cover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 4px solid var(--ink);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 1.5px;
+}
+
+.cover-price {
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+  padding: 2px 10px;
+}
+
+.cover-title-wrap {
+  text-align: center;
+  background: linear-gradient(135deg, var(--red), #d60036);
+  border: 5px solid var(--ink);
+  box-shadow: 7px 7px 0 var(--ink);
+  padding: 16px 16px;
+  margin-bottom: 18px;
+  transform: rotate(-1deg);
+}
+
+.cover-subtitle {
+  font-family: var(--font-display);
+  color: var(--yellow);
+  font-size: 14px;
+  letter-spacing: 4px;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+
+.cover-title {
+  margin: 4px 0;
+  font-family: var(--font-display);
+  font-size: clamp(44px, 6.5vw, 72px);
+  line-height: 0.95;
+  color: #fff;
+  letter-spacing: 3px;
+  -webkit-text-stroke: 3px var(--ink);
+  text-shadow: 6px 6px 0 var(--ink);
+}
+
+.cover-tagline {
+  display: inline-block;
+  margin-top: 6px;
+  background: var(--yellow);
+  color: var(--ink);
+  font-weight: 900;
+  font-size: 14px;
+  padding: 4px 14px;
+  border: 3px solid var(--ink);
+}
+
+.cover-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.info-panel {
+  background: #fff;
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  padding: 12px 16px;
+}
+
+.info-panel h3 {
+  margin: 0 0 8px 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  background: var(--cyan);
+  display: inline-block;
+  padding: 2px 10px;
+  border: 3px solid var(--ink);
+}
+
+.info-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cover-actions {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.comic-btn {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 1px;
+  padding: 12px 26px;
+  border: 4px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.comic-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--ink);
+}
+
+.comic-btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.comic-btn.primary {
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+.comic-btn.secondary {
+  background: var(--cyan);
+  color: var(--ink);
+}
+
+/* 弹窗模态框 */
+.comic-modal {
+  width: min(540px, 92vw);
+  background: var(--paper);
+  border: 6px solid var(--ink);
+  box-shadow: 10px 10px 0 var(--ink);
+  padding: 26px;
+  text-align: center;
+}
+
+.modal-tag {
+  display: inline-block;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: 2px;
+  padding: 4px 14px;
+  border: 3px solid var(--ink);
+  margin-bottom: 10px;
+  transform: rotate(-2deg);
+}
+
+.modal-title {
+  margin: 4px 0 12px 0;
+  font-family: var(--font-display);
+  font-size: 42px;
+  line-height: 1;
+  color: var(--yellow);
+  -webkit-text-stroke: 2px var(--ink);
+  text-shadow: 4px 4px 0 var(--ink);
+}
+
+.modal-desc {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 18px 0;
+  line-height: 1.5;
+}
+
+.modal-stats {
+  background: #fff;
+  border: 3px solid var(--ink);
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .cover-panels {
+    grid-template-columns: 1fr;
+  }
+  .controls-strip {
+    display: none;
+  }
+}

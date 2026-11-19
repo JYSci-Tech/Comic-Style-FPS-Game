@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INK &amp; IRON 3D — 美式漫画第一人称射击</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game-shell">
+    <!-- 主 3D WebGL 画布 -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- 高清 2D 漫画特效叠加层（拟声词、速度线、敌人血条） -->
+    <canvas id="fx-canvas"></canvas>
+
+    <!-- 半调网点 & 漫画边框叠加层 -->
+    <div class="comic-frame-overlay" aria-hidden="true"></div>
+
+    <!-- 受伤红闪叠加层 -->
+    <div id="damage-flash" class="damage-flash" aria-hidden="true"></div>
+
+    <!-- XIII风格 暴击/击杀漫画分镜弹窗 -->
+    <div id="kill-panels" class="kill-panels hidden" aria-hidden="true">
+      <div class="kill-panel kp-1"><span id="kp-text-1">CRACK!</span></div>
+      <div class="kill-panel kp-2"><span id="kp-text-2">HEADSHOT!</span></div>
+      <div class="kill-panel kp-3"><span id="kp-text-3">K.O.!</span></div>
+    </div>
+
+    <!-- 游戏内 HUD -->
+    <div id="hud" class="hud hidden">
+      <div class="hud-top-left">
+        <div class="comic-box issue-badge">
+          <span class="issue-tag" id="hud-issue">ISSUE #1</span>
+          <span class="issue-title" id="hud-level-name">DOWNTOWN ALLEY</span>
+        </div>
+        <div class="comic-box combo-badge hidden" id="hud-combo-box">
+          <span id="hud-combo">x2 COMBO!</span>
+        </div>
+      </div>
+
+      <div class="hud-top-center">
+        <div class="comic-box objective-box" id="hud-objective">
+          消灭所有反派: <span id="hud-enemies-left">0</span>
+        </div>
+        <div class="comic-box boss-bar-box hidden" id="boss-bar-box">
+          <div class="boss-name">DR. HALFTONE</div>
+          <div class="bar-track boss-track">
+            <div class="bar-fill boss-fill" id="boss-hp-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-top-right">
+        <div class="comic-box score-box">
+          <div class="label">SCORE</div>
+          <div class="value" id="hud-score">00000</div>
+        </div>
+        <div class="comic-box minimap-box">
+          <canvas id="minimap-canvas" width="120" height="120"></canvas>
+        </div>
+      </div>
+
+      <div id="crosshair" class="crosshair">
+        <div class="ch-line ch-top"></div>
+        <div class="ch-line ch-bottom"></div>
+        <div class="ch-line ch-left"></div>
+        <div class="ch-line ch-right"></div>
+        <div class="ch-dot"></div>
+        <div id="hitmarker" class="hitmarker"></div>
+      </div>
+
+      <div class="hud-bottom-left">
+        <div class="comic-box portrait-box">
+          <canvas id="portrait-canvas" width="64" height="64"></canvas>
+        </div>
+        <div class="comic-box stats-box">
+          <div class="stat-row">
+            <span class="stat-label">HP</span>
+            <div class="bar-track">
+              <div class="bar-fill hp-fill" id="hud-hp-fill"></div>
+            </div>
+            <span class="stat-num" id="hud-hp-text">100</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">DASH</span>
+            <div class="bar-track">
+              <div class="bar-fill dash-fill" id="hud-dash-fill"></div>
+            </div>
+            <span class="stat-num" id="hud-dash-text">RDY</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-bottom-right">
+        <div class="weapon-slots">
+          <div class="w-slot active" data-weapon="0">1. MAGNUM</div>
+          <div class="w-slot" data-weapon="1">2. SHOTGUN</div>
+          <div class="w-slot" data-weapon="2">3. RAYGUN</div>
+        </div>
+        <div class="comic-box ammo-box">
+          <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
+          <div class="ammo-readout">
+            <span id="hud-ammo-cur">6</span>
+            <span class="ammo-sep">/</span>
+            <span id="hud-ammo-res">∞</span>
+          </div>
+          <div class="reload-hint hidden" id="hud-reload-hint">RELOADING...</div>
+        </div>
+      </div>
+
+      <div class="controls-strip">
+        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键射击 · 右键机瞄 · E/V 重拳 · R 换弹 · 1/2/3 切枪 · ESC 暂停
+      </div>
+    </div>
+
+    <!-- 漫画封面主菜单 -->
+    <div id="start-screen" class="overlay-screen">
+      <div class="comic-cover">
+        <div class="cover-header">
+          <span class="cover-publisher">ANTIGRAVITY COMICS · 3D EDITION</span>
+          <span class="cover-price">15¢ · ISSUE #1</span>
+        </div>
+        <div class="cover-title-wrap">
+          <div class="cover-subtitle">TRUE 3D CEL-SHADED COMIC SHOOTER</div>
+          <h1 class="cover-title">INK &amp; IRON</h1>
+          <div class="cover-tagline">「墨水与钢铁 3D」—— 赛璐璐墨线犯罪之城！</div>
+        </div>
+
+        <div class="cover-panels">
+          <div class="info-panel">
+            <h3>操作指南</h3>
+            <ul>
+              <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与弹跳板</li>
+              <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
+              <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧）</li>
+              <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
+              <li><b>1 / 2 / 3 或滚轮 / R</b>：切换 3D 武器与换弹</li>
+            </ul>
+          </div>
+          <div class="info-panel">
+            <h3>3D 战斗特色</h3>
+            <ul>
+              <li><b>真实部位爆头</b>：瞄准反派头部触发 2.2x 暴击与三格漫画分镜</li>
+              <li><b>可闪避 3D 弹幕</b>：走位、跳跃与冲刺躲避反派能量弹</li>
+              <li><b>高爆 TNT 油桶</b>：连锁爆炸冲击波清场</li>
+              <li><b>3 把 3D 赛璐璐武器</b>：左轮、双管霰弹、射线枪</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="cover-actions">
+          <button id="btn-continue" class="comic-btn primary hidden">继续存档 · ISSUE #2</button>
+          <button id="btn-start" class="comic-btn primary">翻开第 1 期 · 开始战斗!</button>
+          <button id="btn-toggle-sfx" class="comic-btn secondary">音效: 开启</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关卡过场漫画页 -->
+    <div id="intermission-screen" class="overlay-screen hidden">
+      <div class="comic-modal">
+        <div class="modal-tag" id="inter-tag">ISSUE #1 CLEARED!</div>
+        <h2 class="modal-title" id="inter-title">MEANWHILE...</h2>
+        <p class="modal-desc" id="inter-desc"></p>
+        <div class="modal-stats" id="inter-stats"></div>
+        <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
+      </div>
+    </div>
+
+    <!-- 暂停菜单 -->
+    <div id="pause-screen" class="overlay-screen hidden">
+      <div class="comic-modal">
+        <div class="modal-tag">PAUSED</div>
+        <h2 class="modal-title">TO BE CONTINUED...</h2>
+        <p class="modal-desc">点击继续即可重新锁定鼠标并回到战斗。</p>
+        <div class="cover-actions">
+          <button id="btn-resume" class="comic-btn primary">继续战斗</button>
+          <button id="btn-retry-pause" class="comic-btn secondary">重开本关</button>
+          <button id="btn-restart-pause" class="comic-btn secondary">回到第 1 期</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 阵亡/通关界面 -->
+    <div id="end-screen" class="overlay-screen hidden">
+      <div class="comic-modal">
+        <div class="modal-tag" id="end-tag">THE END?</div>
+        <h2 class="modal-title" id="end-title">YOU GOT INKED!</h2>
+        <p class="modal-desc" id="end-desc"></p>
+        <div class="modal-stats" id="end-stats"></div>
+        <div class="cover-actions">
+          <button id="btn-retry-level" class="comic-btn primary">重开本关!</button>
+          <button id="btn-restart" class="comic-btn secondary">回到第 1 期</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

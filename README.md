@@ -1,0 +1,82 @@
+# INK & IRON 3D（墨水与钢铁）
+
+一款基于 **Three.js (WebGL)** + **原生 ES Modules** + **Web Audio API** 打造的美式漫画风格第一人称射击（FPS）游戏。画面采用 3 阶硬切赛璐璐着色（Cel-Shading）、反向法线厚黑墨线描边（Inverted Hull）、半调网点（Halftone）与 XIII 风格三格击杀分镜，开箱即玩、完全离线运行。
+
+## 核心特色
+
+- **真 3D 赛璐璐美漫视觉**
+  - Three.js `PerspectiveCamera` 原生高清 DPR 渲染，自适应窗口比例，支持右键机瞄平滑缩放（ADS）与冲刺动态 FOV 拉伸。
+  - 所有角色、武器、油桶与道具均带厚黑墨线轮廓与程序化高清漫画贴图（砖墙、霓虹商铺、警戒钢板、通缉令、反派实验室、城市天际线）。
+  - 独立 2D 特效叠加层实时投影 3D 漫画拟声词气泡（`BLAM!`、`POW!`、`HEADSHOT!`、`KABOOM!`、`BOING!`、`K.O.!`）及冲刺速度线。
+- **立体战斗与真实部位爆头**
+  - 3D 关节建模敌人（礼帽黑帮 `Goon`、重装猛汉 `Brute`、赛博狙击手 `Sniper`、终极 Boss `DR. HALFTONE`），头部拥有独立碰撞盒，爆头触发 `2.2x` 暴击与三格漫画连环分镜弹窗。
+  - 敌人发射可见 3D 能量弹幕，可通过移动、跳跃、翻越矮木箱、踩弹跳板或带无敌帧的冲刺进行闪避。
+  - 场景中分布高爆 `TNT` 油桶，支持连锁爆炸与范围清场。
+- **3 把 3D 第一人称武器 + 漫画重拳**
+  - `1. THE EQUALIZER (.44 左轮)`：高精度、高爆头倍率、无限备弹。
+  - `2. THE BOOMSTICK (双管霰弹)`：8 弹丸近距轰击，强力后坐力与清场能力。
+  - `3. ZAP-O-MATIC (科幻射线枪)`：全自动高速连射能量束。
+  - `E / V 漫画重拳`：近身出拳击退敌人并造成高额伤害。
+- **按局自动存档（Checkpoints）**
+  - 每期关卡（Issue #1 ~ #3）自动通过 `localStorage` 按局存档。
+  - 阵亡或暂停时可直接**满血重开本关**，不会退回第 1 关；刷新页面后也可在封面点击「继续存档」直接接着打。
+
+## 快速开始
+
+### 环境要求
+- 现代浏览器（Chrome / Edge / Firefox / Safari，支持 WebGL 与 Pointer Lock）
+- 本地静态 HTTP 服务器（如 Python 3 或 Node.js）
+
+### 安装与运行
+
+```bash
+# 1. 进入项目目录
+cd comic-fps
+
+# 2. 若尚未安装 three 依赖，请先安装
+npm install
+
+# 3. 启动本地静态服务（因使用原生 ES Modules + importmap，请勿直接 file:// 打开）
+python3 -m http.server 8080
+```
+
+启动后在浏览器访问：http://localhost:8080
+
+## 操作指南
+
+| 按键 | 功能 |
+| --- | --- |
+| `W` `A` `S` `D` | 移动走位 |
+| `SPACE` | 跳跃（可跳上/翻越矮木箱，踩绿色弹跳板腾空） |
+| `SHIFT` | 冲刺闪避（带短暂无敌帧与漫画速度线） |
+| `鼠标移动` | 自由 3D 视角瞄准 |
+| `鼠标左键` | 开火射击 |
+| `鼠标右键` | 机瞄精确缩放（ADS） |
+| `E` / `V` | 漫画重拳近战击退（`POW!`） |
+| `1` / `2` / `3` / `滚轮` | 切换武器 |
+| `R` | 装填弹药 |
+| `M` | 开关 Web Audio 合成音效 |
+| `ESC` | 暂停菜单（可继续、重开本关或回到第 1 期） |
+
+## 关卡一览
+
+1. **ISSUE #1 — DOWNTOWN ALLEY**：市中心暗巷，帮派分子与高爆油桶街区遭遇战。
+2. **ISSUE #2 — THE INK FACTORY**：墨水工厂，重装敌人、赛博狙击手与双弹跳板立体混战。
+3. **ISSUE #3 — DR. HALFTONE'S LAIR**：半调博士秘密实验室，三连发弹幕最终 Boss 决战。
+
+## 目录结构
+
+```text
+comic-fps/
+├── index.html          # 游戏入口、importmap、封面与 HUD 结构
+├── style.css           # 美式漫画 UI、半调网点与三格分镜样式
+├── package.json        # Three.js 依赖配置
+├── README.md           # 项目说明文档
+└── js/
+    ├── main.js         # 游戏状态机、按局存档（localStorage）、输入与 HUD 同步
+    ├── engine.js       # Three.js 3D 场景、物理碰撞、AI 弹幕、粒子与 2D 拟声词投影
+    ├── weapons.js      # 3 把 3D 武器建模、ADS 机瞄动画与近战重拳
+    ├── textures.js     # 赛璐璐色阶贴图、黑墨描边工具与程序化漫画纹理
+    ├── levels.js       # 3 期关卡地图、敌人配置、道具与视觉主题
+    └── audio.js        # Web Audio API 零依赖合成音效引擎
+```
