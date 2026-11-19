@@ -2,36 +2,57 @@ import * as THREE from "three";
 import { CELL_SIZE, COMIC_LEVELS } from "./levels.js";
 import { WeaponSystem3D } from "./weapons.js";
 
+export function createPlayer() {
+  return {
+    pos: new THREE.Vector3(10, 0, 10),
+    velY: 0,
+    yaw: 0,
+    pitch: 0,
+    onGround: true,
+    hp: 100,
+    maxHp: 100,
+    speed: 9.2,
+    dashTimer: 0,
+    dashCooldown: 0,
+    dashDir: new THREE.Vector3(),
+    hurtTimer: 0,
+    fireTimer: 0,
+    bobPhase: 0,
+  };
+}
+
 // 真 3D Three.js 美式漫画风 FPS 引擎（赛璐璐着色 + 墨线描边 + 真实爆头判定 + 3D 弹幕与特效）
 export class ComicFPS3DEngine {
   constructor(glCanvas, fxCanvas, assets, audio, callbacks = {}) {
     this.glCanvas = glCanvas;
     this.fxCanvas = fxCanvas;
-    this.fxCtx = fxCanvas.getContext("2d");
+    this.fxCtx = fxCanvas?.getContext("2d");
     this.assets = assets;
     this.audio = audio;
     this.callbacks = callbacks;
 
     // WebGL 渲染器（原生高清 DPR，抗锯齿）
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: glCanvas,
-      antialias: true,
-      powerPreference: "high-performance",
-    });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    if (glCanvas) {
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: glCanvas,
+        antialias: true,
+        powerPreference: "high-performance",
+      });
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    }
 
     // 场景与正确比例的透视相机
     this.scene = new THREE.Scene();
     this.baseFov = 72;
-    this.camera = new THREE.PerspectiveCamera(this.baseFov, window.innerWidth / Math.max(1, window.innerHeight), 0.08, 220);
+    this.camera = new THREE.PerspectiveCamera(this.baseFov, 16 / 9, 0.08, 220);
     this.camera.rotation.order = "YXZ";
     this.scene.add(this.camera);
 
     // 3D 第一人称武器系统
-    this.weapons = new WeaponSystem3D(this.camera, this.assets, this.audio);
+    this.weapons = new WeaponSystem3D(glCanvas ? this.camera : null, this.assets, this.audio);
 
     this.levelRoot = new THREE.Group();
     this.scene.add(this.levelRoot);
@@ -45,31 +66,18 @@ export class ComicFPS3DEngine {
 
     // 玩家物理状态（眼高 1.72m，支持跳跃、冲刺与低矮掩体攀爬）
     this.eyeHeight = 1.72;
-    this.player = {
-      pos: new THREE.Vector3(10, 0, 10),
-      velY: 0,
-      yaw: 0,
-      pitch: 0,
-      onGround: true,
-      hp: 100,
-      maxHp: 100,
-      speed: 9.2,
-      dashTimer: 0,
-      dashCooldown: 0,
-      dashDir: new THREE.Vector3(),
-      hurtTimer: 0,
-      fireTimer: 0,
-      bobPhase: 0,
-    };
+    this.player = createPlayer();
 
     this.enemies = [];
     this.props = [];
     this.enemyProjectiles = [];
+    this.projectileId = 0;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
     this.popups = [];
     this.hitTargets = []; // 用于射线检测的所有可击中网格
+    this.particleGeometry = glCanvas ? new THREE.BoxGeometry(0.22, 0.22, 0.22) : null;
 
     this.score = 0;
     this.kills = 0;
@@ -82,8 +90,10 @@ export class ComicFPS3DEngine {
     this.keys = {};
     this.mouseDown = false;
 
-    this._handleResize();
-    window.addEventListener("resize", () => this._handleResize());
+    if (glCanvas) {
+      this._handleResize();
+      window.addEventListener("resize", () => this._handleResize());
+    }
   }
 
   _handleResize() {
@@ -107,7 +117,7 @@ export class ComicFPS3DEngine {
     }
   }
 
-  loadLevel(idx, keepStats = false) {
+  loadLevel(idx, keepStats = false, arena = false) {
     this.levelIdx = idx;
     const lvl = COMIC_LEVELS[idx];
     this.level = lvl;
@@ -119,6 +129,7 @@ export class ComicFPS3DEngine {
     this.enemies = [];
     this.props = [];
     this.enemyProjectiles = [];
+    this.projectileId = 0;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
@@ -204,7 +215,7 @@ export class ComicFPS3DEngine {
     }
 
     // 漫画城市天际线 & 大太阳背景
-    this._buildComicSkyline(worldW, worldH, lvl);
+    if (this.renderer) this._buildComicSkyline(worldW, worldH, lvl);
 
     // 玩家出生点
     this.player.pos.set(lvl.playerStart.x * CELL_SIZE, 0, lvl.playerStart.z * CELL_SIZE);
@@ -228,7 +239,7 @@ export class ComicFPS3DEngine {
     }
 
     // 生成 3D 关节敌人
-    lvl.enemies.forEach((e, idx) => this._spawnEnemy(e, idx));
+    if (!arena) lvl.enemies.forEach((e, idx) => this._spawnEnemy(e, idx));
     // 生成 3D 道具与油桶
     lvl.props.forEach((p, idx) => this._spawnProp(p, idx));
 
@@ -540,11 +551,13 @@ export class ComicFPS3DEngine {
       this.player.velY = 9.2;
       this.player.onGround = false;
       this.audio.playJump();
+      return true;
     }
+    return false;
   }
 
   triggerDash() {
-    if (this.player.dashCooldown > 0 || this.player.dashTimer > 0) return;
+    if (this.player.dashCooldown > 0 || this.player.dashTimer > 0) return false;
     const forward = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
     const right = new THREE.Vector3(Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw));
     const dir = new THREE.Vector3();
@@ -560,10 +573,11 @@ export class ComicFPS3DEngine {
     this.player.dashCooldown = 1.35;
     this.speedLineAlpha = 1.0;
     this.audio.playDash();
+    return true;
   }
 
   triggerMeleePunch() {
-    if (!this.weapons.triggerPunch()) return;
+    if (!this.weapons.triggerPunch()) return false;
     const camPos = this.camera.position;
     const camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     let hit = false;
@@ -572,7 +586,8 @@ export class ComicFPS3DEngine {
       if (!e.alive) continue;
       const toE = new THREE.Vector3(e.root.position.x - camPos.x, 0, e.root.position.z - camPos.z);
       const dist = toE.length();
-      if (dist < 3.6 && toE.normalize().dot(new THREE.Vector3(camDir.x, 0, camDir.z).normalize()) > 0.45) {
+      if (dist < 3.6 && toE.normalize().dot(new THREE.Vector3(camDir.x, 0, camDir.z).normalize()) > 0.45
+        && (this.renderer || this._hasLineOfSight(camPos, e.root.position.clone().setY(1.2)))) {
         hit = true;
         // 安全击退敌人（带墙壁碰撞检测，防止把敌人打进墙体）
         const kx = e.root.position.x + toE.x * 1.4;
@@ -587,30 +602,35 @@ export class ComicFPS3DEngine {
       this.audio.playHit(true);
       if (this.callbacks.onHit) this.callbacks.onHit(true);
     }
+    return true;
   }
 
-  fireWeapon() {
+  fireWeapon(targets = this.hitTargets) {
     if (!this.weapons.canFire()) return;
     const w = this.weapons.consumeShot();
+    this.callbacks.onShot?.(this.weapons.currentIdx);
     this.player.fireTimer = 0.22;
     this.shake = Math.min(14, this.shake + w.recoilKick * 4.2);
 
-    const muzzlePos = this.weapons.getMuzzleWorldPosition();
+    const muzzlePos = this.renderer ? this.weapons.getMuzzleWorldPosition() : this.camera.position;
     const spread = this.weapons.isAds ? w.adsSpread : w.spread;
 
     let hitAny = false;
     let critAny = false;
+    this.camera.updateMatrixWorld();
 
     for (let p = 0; p < w.pellets; p++) {
       const ndcX = (Math.random() - 0.5) * spread * 2;
       const ndcY = (Math.random() - 0.5) * spread * 2;
       this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
-      const hits = this.raycaster.intersectObjects(this.hitTargets, false);
+      const hit = this.raycaster.intersectObjects(targets, false).find(({ distance, object }) => {
+        const { enemy, prop, player } = object.userData;
+        return (this.renderer || distance <= 55) && (enemy?.alive ?? prop?.active ?? (!player || player.hp > 0));
+      });
 
       let endPoint = this.raycaster.ray.origin.clone().addScaledVector(this.raycaster.ray.direction, 55);
 
-      if (hits.length > 0) {
-        const hit = hits[0];
+      if (hit) {
         endPoint = hit.point;
         const ud = hit.object.userData;
 
@@ -623,6 +643,12 @@ export class ComicFPS3DEngine {
         } else if (ud.kind === "barrel" && ud.prop.active) {
           hitAny = true;
           this._explodeBarrel(ud.prop);
+        } else if (ud.kind === "player") {
+          const dmg = ud.isHead ? Math.round(w.damage * w.headshotMult) : w.damage;
+          if (this.callbacks.onPlayerHit?.(ud.player, dmg)) {
+            hitAny = true;
+            critAny ||= ud.isHead;
+          }
         } else {
           // 击中墙壁的漫画火花
           this._spawnParticles(hit.point, 0xffe01b, 5);
@@ -639,6 +665,10 @@ export class ComicFPS3DEngine {
   }
 
   _spawnTracer(start, end, color, radius = 0.045) {
+    if (!this.renderer) {
+      this.callbacks.onTracer?.(end);
+      return;
+    }
     const dir = new THREE.Vector3().subVectors(end, start);
     const len = Math.max(0.2, dir.length());
     const geo = new THREE.CylinderGeometry(radius, radius, len, 6);
@@ -652,10 +682,10 @@ export class ComicFPS3DEngine {
   }
 
   _spawnParticles(pos, color, count = 8) {
-    const geo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+    if (!this.renderer) return;
     for (let i = 0; i < count; i++) {
       const mat = new THREE.MeshBasicMaterial({ color });
-      const mesh = new THREE.Mesh(geo, mat);
+      const mesh = new THREE.Mesh(this.particleGeometry, mat);
       this.assets.addOutline(mesh, 1.25);
       mesh.position.copy(pos);
       this.levelRoot.add(mesh);
@@ -673,6 +703,7 @@ export class ComicFPS3DEngine {
   }
 
   _spawnShockwave(pos, color = 0xff7a00) {
+    if (!this.renderer) return;
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.6, 0.14, 8, 24),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
@@ -684,6 +715,10 @@ export class ComicFPS3DEngine {
   }
 
   spawnPopup(pos, text, color = "#ffe01b", scale = 1.0) {
+    if (!this.renderer) {
+      this.callbacks.onPopup?.(pos, text, color, scale);
+      return;
+    }
     this.popups.push({
       pos: pos.clone(),
       text,
@@ -746,12 +781,14 @@ export class ComicFPS3DEngine {
       }
 
       if (this.getAliveEnemiesCount() === 0 && this.callbacks.onLevelClear) {
-        setTimeout(() => this.callbacks.onLevelClear(), 900);
+        setTimeout(() => {
+          if (this.enemies.includes(enemy)) this.callbacks.onLevelClear();
+        }, 900);
       }
     }
   }
 
-  _explodeBarrel(prop) {
+  _explodeBarrel(prop, players = this.damageablePlayers || [this.player]) {
     if (!prop.active) return;
     prop.active = false;
     const pos = prop.mesh.position.clone();
@@ -759,6 +796,7 @@ export class ComicFPS3DEngine {
     this.hitTargets = this.hitTargets.filter((m) => m !== prop.mesh);
 
     this.audio.playExplosion();
+    this.callbacks.onExplosion?.(pos);
     this.shake = 16;
     this.hitstop = 0.045;
 
@@ -784,25 +822,32 @@ export class ComicFPS3DEngine {
     for (const other of this.props) {
       if (other.active && other.type === "barrel" && other !== prop) {
         if (other.mesh.position.distanceTo(pos) < radius) {
-          setTimeout(() => this._explodeBarrel(other), 130);
+          if (this.renderer) {
+            setTimeout(() => {
+              if (this.props.includes(other)) this._explodeBarrel(other);
+            }, 130);
+          } else {
+            this._explodeBarrel(other, players);
+          }
         }
       }
     }
 
-    const pDist = this.player.pos.distanceTo(new THREE.Vector3(pos.x, this.player.pos.y, pos.z));
-    if (pDist < 7.5) {
-      this._damagePlayer(Math.round(24 * (1 - pDist / 8.5)));
+    for (const player of players) {
+      const dist = Math.hypot(pos.x - player.pos.x, pos.z - player.pos.z);
+      if (dist < 7.5) this._damagePlayer(Math.round(24 * (1 - dist / 8.5)), player);
     }
   }
 
-  _damagePlayer(amount) {
-    if (this.player.hp <= 0 || this.player.dashTimer > 0) return;
-    this.player.hp = Math.max(0, this.player.hp - amount);
-    this.player.hurtTimer = 0.25;
+  _damagePlayer(amount, player = this.player) {
+    if (player.hp <= 0 || player.dashTimer > 0 || player.protection > 0) return false;
+    player.hp = Math.max(0, player.hp - amount);
+    player.hurtTimer = 0.25;
     this.shake = Math.min(16, this.shake + 8);
     this.audio.playHurt();
-    if (this.callbacks.onPlayerHurt) this.callbacks.onPlayerHurt();
-    if (this.player.hp <= 0 && this.callbacks.onGameOver) this.callbacks.onGameOver();
+    this.callbacks.onPlayerHurt?.(player);
+    if (player.hp <= 0) this.callbacks.onGameOver?.(player);
+    return true;
   }
 
   update(dt) {
@@ -811,17 +856,29 @@ export class ComicFPS3DEngine {
       return;
     }
 
+    this._updateCombo(dt);
+    this._updatePlayer(dt);
+    if (this.mouseDown && this.weapons.current.auto) this.fireWeapon();
+    this._updateProps(dt);
+    this._updateEnemies(dt);
+    this._updateProjectiles(dt);
+    this._updateFX(dt);
+  }
+
+  _updateCombo(dt) {
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.combo = 0;
+    }
+  }
+
+  _updatePlayer(dt) {
     const p = this.player;
     if (p.hurtTimer > 0) p.hurtTimer = Math.max(0, p.hurtTimer - dt);
     if (p.fireTimer > 0) p.fireTimer = Math.max(0, p.fireTimer - dt);
     if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - dt);
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 42);
     if (this.speedLineAlpha > 0) this.speedLineAlpha = Math.max(0, this.speedLineAlpha - dt * 3.0);
-
-    if (this.comboTimer > 0) {
-      this.comboTimer -= dt;
-      if (this.comboTimer <= 0) this.combo = 0;
-    }
 
     // 键盘视角辅助旋转
     if (this.keys["ArrowLeft"]) p.yaw += 2.3 * dt;
@@ -876,7 +933,7 @@ export class ComicFPS3DEngine {
     const targetFov = p.dashTimer > 0
       ? 85
       : THREE.MathUtils.lerp(this.baseFov, this.weapons.current.adsFov, this.weapons.adsAmount);
-    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+    if (this.renderer && Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
     }
@@ -885,29 +942,19 @@ export class ComicFPS3DEngine {
 
     // 武器更新与连发
     this.weapons.update(dt, isMoving && p.onGround);
-    if (this.mouseDown && this.weapons.current.auto) {
-      this.fireWeapon();
-    }
-
-    // 道具拾取与弹跳板
-    this._updateProps(dt);
-    // 敌人 AI 与弹幕
-    this._updateEnemies(dt);
-    this._updateProjectiles(dt);
-    this._updateFX(dt);
   }
 
   _syncCamera() {
     const p = this.player;
-    const bob = p.onGround ? Math.sin(p.bobPhase) * 0.055 : 0;
-    const sx = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
-    const sy = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
+    const bob = this.renderer && p.onGround ? Math.sin(p.bobPhase) * 0.055 : 0;
+    const sx = this.renderer && this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
+    const sy = this.renderer && this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
 
     this.camera.position.set(p.pos.x + sx, p.pos.y + this.eyeHeight + bob + sy, p.pos.z);
     this.camera.rotation.set(p.pitch, p.yaw, 0, "YXZ");
   }
 
-  _updateProps(dt) {
+  _updateProps(dt, applyEffects = true) {
     const p = this.player;
     const t = performance.now() * 0.003;
     for (const pr of this.props) {
@@ -915,6 +962,7 @@ export class ComicFPS3DEngine {
       if (pr.type === "medkit" || pr.type === "ammo") {
         pr.mesh.rotation.y += dt * 2.2;
         pr.mesh.position.y = 0.55 + Math.sin(t + pr.id) * 0.12;
+        if (!applyEffects) continue;
         const dist = Math.hypot(pr.x - p.pos.x, pr.z - p.pos.z);
         if (dist < 1.65 && Math.abs(p.pos.y) < 1.5) {
           if (pr.type === "medkit" && p.hp < p.maxHp) {
@@ -922,30 +970,35 @@ export class ComicFPS3DEngine {
             this.levelRoot.remove(pr.mesh);
             p.hp = Math.min(p.maxHp, p.hp + 35);
             this.audio.playPickup();
+            this.callbacks.onPickup?.(p);
             this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), "+35 HP!", "#38e54d", 1.15);
           } else if (pr.type === "ammo") {
             pr.active = false;
             this.levelRoot.remove(pr.mesh);
             this.weapons.addAmmo();
             this.audio.playPickup();
+            this.callbacks.onPickup?.(p);
             this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), "+AMMO!", "#ffe01b", 1.15);
           }
         }
       } else if (pr.type === "jumppad") {
         if (pr.ring) pr.ring.position.y = 0.22 + Math.sin(t * 2.5) * 0.1;
+        if (!applyEffects) continue;
         const dist = Math.hypot(pr.x - p.pos.x, pr.z - p.pos.z);
         if (dist < 1.35 && p.pos.y < 0.8 && p.velY <= 1) {
           p.velY = 14.8;
           p.onGround = false;
           this.audio.playJump();
+          this.callbacks.onBounce?.(p);
           this.spawnPopup(new THREE.Vector3(pr.x, 1.6, pr.z), "BOING!", "#00ffaa", 1.25);
         }
       }
     }
   }
 
-  _updateEnemies(dt) {
-    const pPos = new THREE.Vector3(this.player.pos.x, this.player.pos.y + 1.2, this.player.pos.z);
+  _updateEnemies(dt, players = [this.player]) {
+    const targets = players.filter((player) => player.hp > 0)
+      .map((player) => player.pos.clone().add(new THREE.Vector3(0, 1.2, 0)));
 
     for (const e of this.enemies) {
       if (!e.alive) {
@@ -969,10 +1022,28 @@ export class ComicFPS3DEngine {
       }
 
       const eEye = new THREE.Vector3(e.root.position.x, 1.8 * e.scale, e.root.position.z);
+      let pPos;
+      let seen;
+      let nearest = Infinity;
+      let nearestVisible = Infinity;
+      for (const target of targets) {
+        const distance = eEye.distanceToSquared(target);
+        if (distance < nearest) {
+          nearest = distance;
+          pPos = target;
+        }
+        if (distance < nearestVisible && Math.hypot(target.x - eEye.x, target.z - eEye.z) < e.range + 6
+          && this._hasLineOfSight(eEye, target)) {
+          nearestVisible = distance;
+          seen = target;
+        }
+      }
+      if (!pPos) continue;
+      pPos = seen || pPos;
+      const canSee = Boolean(seen);
       const dx = pPos.x - eEye.x;
       const dz = pPos.z - eEye.z;
       const dist = Math.hypot(dx, dz);
-      const canSee = dist < e.range + 6 && this._hasLineOfSight(eEye, pPos);
 
       if (canSee && !e.alerted) {
         e.alerted = true;
@@ -1042,15 +1113,14 @@ export class ComicFPS3DEngine {
         dir.normalize();
       }
 
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(enemy.type === "boss" ? 0.28 : 0.18, 8, 8),
-        new THREE.MeshBasicMaterial({ color: enemy.projColor })
-      );
-      this.assets.addOutline(mesh, 1.35);
+      const mesh = this._makeProjectileMesh(enemy.type, enemy.projColor);
       mesh.position.copy(from).addScaledVector(dir, 0.8);
       this.levelRoot.add(mesh);
 
       this.enemyProjectiles.push({
+        id: this.projectileId++,
+        type: enemy.type,
+        color: enemy.projColor,
         mesh,
         vel: dir.multiplyScalar(spd),
         dmg: enemy.dmg,
@@ -1060,8 +1130,18 @@ export class ComicFPS3DEngine {
     }
   }
 
-  _updateProjectiles(dt) {
-    const pCenter = new THREE.Vector3(this.player.pos.x, this.player.pos.y + 1.15, this.player.pos.z);
+  _makeProjectileMesh(type, color) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(type === "boss" ? 0.28 : 0.18, 8, 8),
+      new THREE.MeshBasicMaterial({ color })
+    );
+    this.assets.addOutline(mesh, 1.35);
+    return mesh;
+  }
+
+  _updateProjectiles(dt, players = [this.player]) {
+    const targets = players.filter((player) => player.hp > 0)
+      .map((player) => [player, player.pos.clone().add(new THREE.Vector3(0, 1.15, 0))]);
 
     for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
       const pr = this.enemyProjectiles[i];
@@ -1073,16 +1153,25 @@ export class ComicFPS3DEngine {
         this._spawnParticles(pr.mesh.position, 0xffe01b, 3);
         remove = true;
       }
-      if (!remove && pr.mesh.position.distanceTo(pCenter) < 0.95) {
-        this._damagePlayer(pr.dmg);
-        remove = true;
+      if (!remove) {
+        const target = targets.find(([player, center]) => player.hp > 0 && pr.mesh.position.distanceTo(center) < 0.95);
+        if (target) {
+          this._damagePlayer(pr.dmg, target[0]);
+          remove = true;
+        }
       }
 
       if (remove) {
-        this.levelRoot.remove(pr.mesh);
+        this._disposeTransientMesh(pr.mesh);
         this.enemyProjectiles.splice(i, 1);
       }
     }
+  }
+
+  _disposeTransientMesh(mesh) {
+    mesh.removeFromParent();
+    if (mesh.geometry !== this.particleGeometry) mesh.geometry.dispose();
+    mesh.material.dispose();
   }
 
   _updateFX(dt) {
@@ -1091,7 +1180,7 @@ export class ComicFPS3DEngine {
       tr.age += dt;
       tr.mesh.material.opacity = Math.max(0, 1 - tr.age / tr.life);
       if (tr.age >= tr.life) {
-        this.levelRoot.remove(tr.mesh);
+        this._disposeTransientMesh(tr.mesh);
         this.tracers.splice(i, 1);
       }
     }
@@ -1105,7 +1194,7 @@ export class ComicFPS3DEngine {
       pt.mesh.rotation.y += dt * 5;
       if (pt.mesh.position.y < 0.1) pt.mesh.position.y = 0.1;
       if (pt.age >= pt.life) {
-        this.levelRoot.remove(pt.mesh);
+        this._disposeTransientMesh(pt.mesh);
         this.particles.splice(i, 1);
       }
     }
@@ -1117,7 +1206,7 @@ export class ComicFPS3DEngine {
       sw.mesh.scale.setScalar(1 + t * 14);
       sw.mesh.material.opacity = Math.max(0, 1 - t);
       if (sw.age >= sw.life) {
-        this.levelRoot.remove(sw.mesh);
+        this._disposeTransientMesh(sw.mesh);
         this.shockwaves.splice(i, 1);
       }
     }

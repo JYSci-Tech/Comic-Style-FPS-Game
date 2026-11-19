@@ -2,6 +2,8 @@ import { ComicAudio } from "./audio.js";
 import { ComicAssets } from "./textures.js";
 import { COMIC_LEVELS } from "./levels.js";
 import { ComicFPS3DEngine } from "./engine.js";
+import { LanClient } from "./lan.js";
+import { KILL_LIMIT } from "./lan-rules.js";
 
 const SAVE_KEY = "ink_and_iron_checkpoint_v1";
 
@@ -27,6 +29,7 @@ const hudLevelName = document.getElementById("hud-level-name");
 const hudComboBox = document.getElementById("hud-combo-box");
 const hudCombo = document.getElementById("hud-combo");
 const hudEnemiesLeft = document.getElementById("hud-enemies-left");
+const hudObjectiveLabel = document.getElementById("hud-objective-label");
 const hudScore = document.getElementById("hud-score");
 const bossBarBox = document.getElementById("boss-bar-box");
 const bossHpFill = document.getElementById("boss-hp-fill");
@@ -53,7 +56,7 @@ const btnRestart = document.getElementById("btn-restart");
 const audio = new ComicAudio();
 const assets = new ComicAssets();
 
-let state = "menu"; // menu | playing | paused | intermission | gameover | victory
+let state = "menu"; // menu | playing | paused | intermission | gameover | victory | lan
 let hitmarkerTimer = 0;
 let killPanelTimeout = null;
 let currentCheckpoint = null;
@@ -170,10 +173,30 @@ const initialSave = readSavedCheckpoint();
 engine.loadLevel(initialSave ? initialSave.levelIdx : 0, false);
 refreshCoverSaveUI();
 
+const lan = new LanClient(engine, {
+  onOpen() {
+    state = "lan";
+    hideAllScreens();
+    hud.classList.add("hidden");
+  },
+  onClose() {
+    state = "menu";
+    const saved = readSavedCheckpoint();
+    engine.loadLevel(saved?.levelIdx ?? 0, false);
+    refreshCoverSaveUI();
+    startScreen.classList.remove("hidden");
+  },
+  onMatch(active) {
+    hud.classList.toggle("hidden", !active);
+  },
+  lockPointer,
+  unlockPointer,
+});
+
 function lockPointer() {
   if (glCanvas.requestPointerLock) {
     try {
-      glCanvas.requestPointerLock();
+      glCanvas.requestPointerLock()?.catch(() => lan.pointerError());
     } catch (_) {}
   }
 }
@@ -303,15 +326,34 @@ btnToggleSfx.addEventListener("click", () => {
 });
 
 document.addEventListener("pointerlockchange", () => {
+  if (state === "lan") {
+    lan.pointerChanged();
+    return;
+  }
   const locked = document.pointerLockElement === glCanvas;
   if (!locked && state === "playing") {
     pauseGame();
   }
 });
+document.addEventListener("pointerlockerror", () => lan.pointerError());
+window.addEventListener("blur", () => {
+  if (state === "lan" && lan.match) lan.releaseInput();
+});
 
 glCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 glCanvas.addEventListener("mousedown", (e) => {
+  if (state === "lan") {
+    if (!lan.canControl) return;
+    if (e.button === 0) {
+      engine.mouseDown = true;
+      lan.action("fire");
+    } else if (e.button === 2) {
+      engine.setAds(true);
+      lan.sendInput();
+    }
+    return;
+  }
   if (state !== "playing") return;
   if (document.pointerLockElement !== glCanvas) {
     lockPointer();
@@ -325,24 +367,46 @@ glCanvas.addEventListener("mousedown", (e) => {
 });
 
 window.addEventListener("mouseup", (e) => {
+  if (state === "lan" && !lan.canControl) return;
   if (e.button === 0) engine.mouseDown = false;
   else if (e.button === 2) engine.setAds(false);
+  if (state === "lan" && (e.button === 0 || e.button === 2)) lan.sendInput();
 });
 
 window.addEventListener("mousemove", (e) => {
-  if (state === "playing" && document.pointerLockElement === glCanvas) {
+  if ((state === "playing" && document.pointerLockElement === glCanvas) || (state === "lan" && lan.canControl)) {
     engine.handleMouseMove(e.movementX, e.movementY);
   }
 });
 
 window.addEventListener("wheel", (e) => {
+  if (state === "lan" && lan.canControl) {
+    lan.weapon = (lan.weapon + (e.deltaY > 0 ? 1 : 2)) % 3;
+    lan.sendInput();
+    return;
+  }
   if (state !== "playing") return;
   engine.weapons.cycle(e.deltaY > 0 ? 1 : -1);
 });
 
 window.addEventListener("keydown", (e) => {
+  if (state !== "playing" && !(state === "lan" && lan.canControl)) return;
   engine.keys[e.code] = true;
-  if (state !== "playing") return;
+  if (state === "lan") {
+    if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
+    if (e.repeat) return;
+    if (/^Digit[1-3]$/.test(e.code)) {
+      lan.weapon = Number(e.code.at(-1)) - 1;
+      lan.sendInput();
+    } else if (e.code === "KeyR") lan.action("reload");
+    else if (e.code === "ShiftLeft" || e.code === "ShiftRight") lan.action("dash");
+    else if (e.code === "Space") lan.action("jump");
+    else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
+    else if (e.code === "KeyM") {
+      btnToggleSfx.textContent = engine.audio.toggle() ? "音效: 开启" : "音效: 关闭";
+    } else lan.sendInput();
+    return;
+  }
 
   if (e.code === "Digit1") engine.weapons.select(0);
   else if (e.code === "Digit2") engine.weapons.select(1);
@@ -361,7 +425,9 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("keyup", (e) => {
+  if (!engine.keys[e.code]) return;
   engine.keys[e.code] = false;
+  if (state === "lan" && lan.canControl) lan.sendInput();
 });
 
 function updateHUD(dt) {
@@ -375,9 +441,11 @@ function updateHUD(dt) {
   crosshair.classList.toggle("ads", engine.weapons.isAds);
 
   const lvl = engine.level;
-  hudIssue.textContent = lvl.issue;
+  const pvp = state === "lan" && lan.match?.mode === "pvp";
+  hudIssue.textContent = pvp ? "玩家对战" : lvl.issue;
   hudLevelName.textContent = lvl.name;
-  hudEnemiesLeft.textContent = engine.getAliveEnemiesCount();
+  hudObjectiveLabel.textContent = pvp ? "击倒目标" : "消灭所有反派:";
+  hudEnemiesLeft.textContent = pvp ? String(KILL_LIMIT) : engine.getAliveEnemiesCount();
   hudScore.textContent = String(engine.score).padStart(5, "0");
 
   if (engine.combo >= 2) {
@@ -427,7 +495,12 @@ function loop(now) {
     engine.update(dt);
     engine.render();
     updateHUD(dt);
-  } else if (state === "menu") {
+  } else if (state === "lan" && lan.match) {
+    lan.update(dt);
+    engine.render();
+    updateHUD(dt);
+    lan.view.drawLabels(miniCtx);
+  } else if (state === "menu" || state === "lan") {
     engine.player.yaw -= dt * 0.25;
     engine._syncCamera();
     engine.render();

@@ -48,7 +48,7 @@
 
       <div class="hud-top-center">
         <div class="comic-box objective-box" id="hud-objective">
-          消灭所有反派: <span id="hud-enemies-left">0</span>
+          <span id="hud-objective-label">消灭所有反派:</span> <span id="hud-enemies-left">0</span>
         </div>
         <div class="comic-box boss-bar-box hidden" id="boss-bar-box">
           <div class="boss-name">DR. HALFTONE</div>
@@ -66,6 +66,7 @@
         <div class="comic-box minimap-box">
           <canvas id="minimap-canvas" width="120" height="120"></canvas>
         </div>
+        <div id="hud-lan" class="comic-box lan-scoreboard hidden"></div>
       </div>
 
       <div id="crosshair" class="crosshair">
@@ -159,9 +160,61 @@
         <div class="cover-actions">
           <button id="btn-continue" class="comic-btn primary hidden">继续存档 · ISSUE #2</button>
           <button id="btn-start" class="comic-btn primary">翻开第 1 期 · 开始战斗!</button>
+          <button id="btn-lan" class="comic-btn secondary">局域网联机</button>
           <button id="btn-toggle-sfx" class="comic-btn secondary">音效: 开启</button>
         </div>
       </div>
+    </div>
+
+    <div id="lan-screen" class="overlay-screen hidden">
+      <section class="comic-modal lan-modal" aria-labelledby="lan-title">
+        <h2 id="lan-title" class="modal-title">局域网联机</h2>
+        <p id="lan-status" class="lan-status" role="status"></p>
+        <div id="lan-entry">
+          <label class="lan-field">玩家昵称 <input id="lan-name" maxlength="18" required autocomplete="off"></label>
+          <div class="lan-options">
+            <div class="lan-choice">
+              <h3>创建房间</h3>
+              <button id="lan-coop" class="comic-btn primary" type="button" disabled>合作闯关</button>
+              <button id="lan-pvp" class="comic-btn secondary" type="button" disabled>玩家对战</button>
+            </div>
+            <form id="lan-join" class="lan-choice">
+              <h3>加入房间</h3>
+              <label class="lan-field">房间码
+                <input id="lan-code" maxlength="5" pattern="[A-Za-z2-9]{5}" placeholder="如 A7K9B" required autocomplete="off">
+              </label>
+              <button id="lan-join-button" class="comic-btn primary" type="submit" disabled>加入</button>
+            </form>
+          </div>
+          <div class="cover-actions">
+            <button id="lan-reconnect" class="comic-btn primary hidden" type="button">重新连接</button>
+            <button id="lan-back" class="comic-btn secondary" type="button">返回封面</button>
+          </div>
+        </div>
+        <div id="lan-room" class="hidden">
+          <h3 id="lan-room-mode"></h3>
+          <label class="lan-field">邀请链接 <input id="lan-invite" type="text" readonly></label>
+          <ul id="lan-members" class="lan-members"></ul>
+          <div class="cover-actions">
+            <button id="lan-start" class="comic-btn primary" type="button">开始游戏</button>
+            <button id="lan-leave" class="comic-btn secondary" type="button">离开房间</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="lan-match-screen" class="overlay-screen hidden">
+      <section class="comic-modal lan-modal" aria-labelledby="lan-match-title">
+        <h2 id="lan-match-title" class="modal-title"></h2>
+        <p id="lan-match-desc" class="modal-desc"></p>
+        <div class="cover-actions">
+          <button id="lan-focus" class="comic-btn primary" type="button">进入战斗</button>
+          <button id="lan-next" class="comic-btn primary hidden" type="button">进入下一期</button>
+          <button id="lan-retry" class="comic-btn primary hidden" type="button">重开本关</button>
+          <button id="lan-return" class="comic-btn secondary hidden" type="button">返回房间</button>
+          <button id="lan-exit" class="comic-btn secondary" type="button">离开房间</button>
+        </div>
+      </section>
     </div>
 
     <!-- 关卡过场漫画页 -->

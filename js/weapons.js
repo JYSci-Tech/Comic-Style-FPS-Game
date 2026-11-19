@@ -7,9 +7,6 @@ export class WeaponSystem3D {
     this.assets = assets;
     this.audio = audio;
 
-    this.root = new THREE.Group();
-    this.camera.add(this.root);
-
     this.weapons = [
       {
         id: "magnum",
@@ -79,17 +76,15 @@ export class WeaponSystem3D {
       },
     ];
 
-    this.models = [
-      this._buildMagnum(),
-      this._buildShotgun(),
-      this._buildRaygun(),
-    ];
-    this.models.forEach((m) => this.root.add(m.group));
-
-    // 近战漫画拳头
-    this.punchFist = this._buildPunchFist();
-    this.camera.add(this.punchFist);
-    this.punchFist.visible = false;
+    if (camera) {
+      this.root = new THREE.Group();
+      this.camera.add(this.root);
+      this.models = [this._buildMagnum(), this._buildShotgun(), this._buildRaygun()];
+      this.models.forEach((m) => this.root.add(m.group));
+      this.punchFist = this._buildPunchFist();
+      this.camera.add(this.punchFist);
+      this.punchFist.visible = false;
+    }
 
     this.currentIdx = 0;
     this.cooldown = 0;
@@ -99,6 +94,7 @@ export class WeaponSystem3D {
     this.muzzleFlash = 0;
     this.swayTime = 0;
     this.switchAnim = 0;
+    this.autoReloadTimer = 0;
     this.adsAmount = 0;
     this.isAds = false;
     this.punchTimer = 0;
@@ -271,6 +267,7 @@ export class WeaponSystem3D {
   }
 
   _syncVisibility() {
+    if (!this.models) return;
     this.models.forEach((m, idx) => {
       m.group.visible = idx === this.currentIdx;
     });
@@ -290,6 +287,8 @@ export class WeaponSystem3D {
     this.muzzleFlash = 0;
     this.isAds = false;
     this.adsAmount = 0;
+    this.punchTimer = 0;
+    this.autoReloadTimer = 0;
     this._syncVisibility();
   }
 
@@ -301,6 +300,7 @@ export class WeaponSystem3D {
   select(idx) {
     if (idx < 0 || idx >= this.weapons.length || idx === this.currentIdx) return;
     this.currentIdx = idx;
+    this.autoReloadTimer = 0;
     this.reloading = false;
     this.reloadTimer = 0;
     this.cooldown = 0.16;
@@ -354,11 +354,13 @@ export class WeaponSystem3D {
     else this.audio.playRaygun();
 
     if (w.ammo === 0 && w.reserve > 0) {
-      setTimeout(() => {
-        if (this.current === w && w.ammo === 0 && !this.reloading) {
-          this.startReload();
-        }
-      }, 170);
+      if (this.camera) {
+        setTimeout(() => {
+          if (this.current === w && w.ammo === 0 && !this.reloading) this.startReload();
+        }, 170);
+      } else {
+        this.autoReloadTimer = 0.17;
+      }
     }
     return w;
   }
@@ -368,6 +370,10 @@ export class WeaponSystem3D {
   }
 
   update(dt, isMoving) {
+    if (this.autoReloadTimer > 0) {
+      this.autoReloadTimer -= dt;
+      if (this.autoReloadTimer <= 0 && this.current.ammo === 0) this.startReload();
+    }
     if (this.cooldown > 0) this.cooldown = Math.max(0, this.cooldown - dt);
     if (this.muzzleFlash > 0) this.muzzleFlash = Math.max(0, this.muzzleFlash - dt);
     if (this.recoil > 0) this.recoil = Math.max(0, this.recoil - dt * 5.8);
@@ -394,6 +400,9 @@ export class WeaponSystem3D {
         this.reloading = false;
       }
     }
+
+    this.punchTimer = Math.max(0, this.punchTimer - dt);
+    if (!this.camera) return;
 
     // 武器位置、后坐力与动画
     const w = this.current;
@@ -430,7 +439,6 @@ export class WeaponSystem3D {
 
     // 近战重拳动画
     if (this.punchTimer > 0) {
-      this.punchTimer = Math.max(0, this.punchTimer - dt);
       const p = 1 - this.punchTimer / 0.34;
       const thrust = Math.sin(p * Math.PI);
       this.punchFist.visible = true;
