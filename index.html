@@ -24,8 +24,26 @@
     <!-- 半调网点 & 漫画边框叠加层 -->
     <div class="comic-frame-overlay" aria-hidden="true"></div>
 
-    <!-- 受伤红闪叠加层 -->
-    <div id="damage-flash" class="damage-flash" aria-hidden="true"></div>
+    <!-- 受伤红闪叠加层（醒目漫画受击框 + 冲击字） -->
+    <div id="damage-flash" class="damage-flash" aria-hidden="true">
+      <div id="damage-stamp" class="damage-stamp">OUCH!</div>
+    </div>
+
+    <!-- PvP / 联机全屏死亡与复活倒计时遮罩 -->
+    <div id="respawn-screen" class="respawn-screen hidden" aria-hidden="true">
+      <div class="respawn-banner">
+        <div class="respawn-tag" id="respawn-tag">K.O.!</div>
+        <div class="respawn-title">YOU GOT INKED!</div>
+        <div class="respawn-reason" id="respawn-reason">正在等待复活...</div>
+        <div class="respawn-count-wrap">
+          <span class="respawn-label">复活倒计时</span>
+          <span class="respawn-timer" id="respawn-timer">3.0s</span>
+        </div>
+        <div class="bar-track respawn-track">
+          <div class="bar-fill respawn-fill" id="respawn-fill"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- XIII风格 暴击/击杀漫画分镜弹窗 -->
     <div id="kill-panels" class="kill-panels hidden" aria-hidden="true">
@@ -75,7 +93,17 @@
         <div class="ch-line ch-left"></div>
         <div class="ch-line ch-right"></div>
         <div class="ch-dot"></div>
+        <div id="hit-ring" class="hit-ring"></div>
         <div id="hitmarker" class="hitmarker"></div>
+        <div id="hit-label" class="hit-label">HIT!</div>
+      </div>
+
+      <!-- 准星下方换弹夹进度条与倒计时 -->
+      <div id="reload-hud" class="reload-hud hidden">
+        <div class="reload-hud-text" id="reload-hud-text">换弹中 1.0s</div>
+        <div class="bar-track reload-track">
+          <div class="bar-fill reload-fill" id="reload-fill"></div>
+        </div>
       </div>
 
       <div class="hud-bottom-left">
@@ -122,47 +150,57 @@
       </div>
     </div>
 
-    <!-- 漫画封面主菜单 -->
-    <div id="start-screen" class="overlay-screen">
-      <div class="comic-cover">
-        <div class="cover-header">
-          <span class="cover-publisher">ANTIGRAVITY COMICS · 3D EDITION</span>
-          <span class="cover-price">15¢ · ISSUE #1</span>
+    <!-- 3A 风格全屏实景主菜单（主体展示实时 3D 漫画场景，菜单置于右下角） -->
+    <div id="start-screen" class="overlay-screen aaa-title-screen">
+      <div class="aaa-brand">
+        <div class="aaa-kicker">
+          <span class="aaa-pub">ANTIGRAVITY COMICS · 3D EDITION</span>
+          <span class="aaa-issue-pill">5 ISSUES · CO-OP &amp; PVP</span>
         </div>
-        <div class="cover-title-wrap">
-          <div class="cover-subtitle">TRUE 3D CEL-SHADED COMIC SHOOTER</div>
-          <h1 class="cover-title">INK &amp; IRON</h1>
-          <div class="cover-tagline">「墨水与钢铁 3D」—— 赛璐璐墨线犯罪之城！</div>
-        </div>
+        <h1 class="aaa-logo">INK &amp; IRON</h1>
+        <div class="aaa-tagline">「墨水与钢铁 3D」—— 赛璐璐墨线犯罪之城</div>
+      </div>
 
-        <div class="cover-panels">
+      <div class="aaa-footer">
+        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · E 重拳</span>
+      </div>
+
+      <nav class="aaa-menu" aria-label="主菜单">
+        <button id="btn-continue" class="aaa-menu-btn primary hidden" type="button">继续存档 · ISSUE #2</button>
+        <button id="btn-start" class="aaa-menu-btn primary" type="button">开始战役 · ISSUE #1</button>
+        <button id="btn-lan" class="aaa-menu-btn" type="button">局域网联机 · CO-OP / PVP</button>
+        <button id="btn-guide" class="aaa-menu-btn" type="button">操作指南与玩法</button>
+        <button id="btn-toggle-sfx" class="aaa-menu-btn subtle" type="button">音效: 开启</button>
+      </nav>
+    </div>
+
+    <!-- 操作指南弹窗（从右下角菜单按需打开，不遮挡主界面） -->
+    <div id="guide-screen" class="overlay-screen hidden">
+      <div class="comic-modal guide-modal">
+        <div class="modal-tag">FIELD MANUAL</div>
+        <h2 class="modal-title">操作指南</h2>
+        <div class="cover-panels guide-panels">
           <div class="info-panel">
-            <h3>操作指南</h3>
+            <h3>基础操作</h3>
             <ul>
-              <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与弹跳板</li>
+              <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与移动平台</li>
               <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
-              <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧）</li>
+              <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
               <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
               <li><b>1 / 2 / 3 或滚轮 / R</b>：切换 3D 武器与换弹</li>
             </ul>
           </div>
           <div class="info-panel">
-            <h3>3D 战斗特色</h3>
+            <h3>3D 战斗与机关</h3>
             <ul>
-              <li><b>真实部位爆头</b>：瞄准反派头部触发 2.2x 暴击与三格漫画分镜</li>
-              <li><b>可闪避 3D 弹幕</b>：走位、跳跃与冲刺躲避反派能量弹</li>
-              <li><b>高爆 TNT 油桶</b>：连锁爆炸冲击波清场</li>
-              <li><b>3 把 3D 赛璐璐武器</b>：左轮、双管霰弹、射线枪</li>
+              <li><b>真实部位爆头</b>：瞄准头部触发 2.2x 暴击与三格分镜</li>
+              <li><b>动态散布与后坐力</b>：静止/机瞄最精准，全屏枪械震感</li>
+              <li><b>多样关卡机关</b>：可踩踏移动平台、加速带、周期激光墙</li>
+              <li><b>高爆 TNT 油桶</b>：连锁爆炸清场；支持 2–4 人局域网联机</li>
             </ul>
           </div>
         </div>
-
-        <div class="cover-actions">
-          <button id="btn-continue" class="comic-btn primary hidden">继续存档 · ISSUE #2</button>
-          <button id="btn-start" class="comic-btn primary">翻开第 1 期 · 开始战斗!</button>
-          <button id="btn-lan" class="comic-btn secondary">局域网联机</button>
-          <button id="btn-toggle-sfx" class="comic-btn secondary">音效: 开启</button>
-        </div>
+        <button id="btn-guide-close" class="comic-btn primary" type="button">明白了，返回封面</button>
       </div>
     </div>
 
@@ -205,14 +243,17 @@
 
     <div id="lan-match-screen" class="overlay-screen hidden">
       <section class="comic-modal lan-modal" aria-labelledby="lan-match-title">
+        <div class="modal-tag hidden" id="lan-match-tag">MATCH RESULT</div>
         <h2 id="lan-match-title" class="modal-title"></h2>
         <p id="lan-match-desc" class="modal-desc"></p>
-        <div class="cover-actions">
+        <p id="lan-match-wait" class="result-wait-hint hidden"></p>
+        <div id="lan-match-actions" class="cover-actions">
           <button id="lan-focus" class="comic-btn primary" type="button">进入战斗</button>
           <button id="lan-next" class="comic-btn primary hidden" type="button">进入下一期</button>
           <button id="lan-retry" class="comic-btn primary hidden" type="button">重开本关</button>
           <button id="lan-return" class="comic-btn secondary hidden" type="button">返回房间</button>
           <button id="lan-exit" class="comic-btn secondary" type="button">离开房间</button>
+          <button id="lan-home" class="comic-btn secondary hidden" type="button">回到首页</button>
         </div>
       </section>
     </div>
@@ -224,7 +265,11 @@
         <h2 class="modal-title" id="inter-title">MEANWHILE...</h2>
         <p class="modal-desc" id="inter-desc"></p>
         <div class="modal-stats" id="inter-stats"></div>
-        <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
+        <p id="inter-wait" class="result-wait-hint hidden"></p>
+        <div id="inter-actions" class="cover-actions">
+          <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
+          <button id="btn-home-inter" class="comic-btn secondary">回到首页</button>
+        </div>
       </div>
     </div>
 
@@ -238,6 +283,7 @@
           <button id="btn-resume" class="comic-btn primary">继续战斗</button>
           <button id="btn-retry-pause" class="comic-btn secondary">重开本关</button>
           <button id="btn-restart-pause" class="comic-btn secondary">回到第 1 期</button>
+          <button id="btn-home-pause" class="comic-btn secondary">回到首页</button>
         </div>
       </div>
     </div>
@@ -249,9 +295,11 @@
         <h2 class="modal-title" id="end-title">YOU GOT INKED!</h2>
         <p class="modal-desc" id="end-desc"></p>
         <div class="modal-stats" id="end-stats"></div>
-        <div class="cover-actions">
+        <p id="end-wait" class="result-wait-hint hidden"></p>
+        <div id="end-actions" class="cover-actions">
           <button id="btn-retry-level" class="comic-btn primary">重开本关!</button>
           <button id="btn-restart" class="comic-btn secondary">回到第 1 期</button>
+          <button id="btn-home-end" class="comic-btn secondary">回到首页</button>
         </div>
       </div>
     </div>

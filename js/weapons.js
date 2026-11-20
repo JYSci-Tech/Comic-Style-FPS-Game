@@ -110,11 +110,47 @@ export class WeaponSystem3D {
     return this.models[this.currentIdx];
   }
 
-  _part(geo, color, emissive = 0x000000, outlineScale = 1.06) {
+  _part(geo, color, emissive = 0x000000, outlineScale = 1.05, crease = false) {
     const mat = this.assets.toonMat({ color, emissive });
     const mesh = new THREE.Mesh(geo, mat);
-    this.assets.addOutline(mesh, outlineScale);
+    if (outlineScale > 1) this.assets.addOutline(mesh, outlineScale);
+    if (crease) this.assets.addCreaseLines(mesh, 26);
     return mesh;
+  }
+
+  _buildGlovedHand(x = 0.008, y = -0.125, z = 0.125) {
+    const hand = new THREE.Group();
+    hand.position.set(x, y, z);
+
+    // 掌部黑手套
+    const palm = this._part(new THREE.BoxGeometry(0.105, 0.105, 0.12), 0x262330, 0, 1.05);
+    hand.add(palm);
+
+    // 3 节卷握手指骨节
+    for (let i = 0; i < 3; i++) {
+      const finger = this._part(new THREE.BoxGeometry(0.095, 0.024, 0.045), 0x343044, 0, 1.06);
+      finger.position.set(0, 0.028 - i * 0.027, -0.055);
+      hand.add(finger);
+    }
+
+    // 拇指扣在侧面
+    const thumb = this._part(new THREE.BoxGeometry(0.032, 0.034, 0.072), 0x343044, 0, 1.06);
+    thumb.position.set(-0.055, 0.045, -0.02);
+    thumb.rotation.set(0.25, 0.2, 0.25);
+    hand.add(thumb);
+
+    // 漫画硬汉风衣袖口 + 金色护腕扣
+    const cuff = this._part(new THREE.CylinderGeometry(0.058, 0.066, 0.06, 10), 0xffe01b, 0, 1.06);
+    cuff.rotation.x = Math.PI / 2.2;
+    cuff.position.set(0.015, -0.035, 0.095);
+    hand.add(cuff);
+
+    const sleeve = this._part(new THREE.CylinderGeometry(0.068, 0.082, 0.14, 10), 0x1c1a24, 0, 1.05);
+    sleeve.rotation.x = Math.PI / 2.2;
+    sleeve.position.set(0.025, -0.06, 0.18);
+    hand.add(sleeve);
+
+    return hand;
   }
 
   _makeMuzzleStar(color) {
@@ -138,130 +174,383 @@ export class WeaponSystem3D {
   _buildMagnum() {
     const group = new THREE.Group();
 
-    // 枪管
-    const barrel = this._part(new THREE.BoxGeometry(0.075, 0.085, 0.36), 0xd8e2e8);
-    barrel.position.set(0, 0.05, -0.18);
+    // 重型八角钢制枪管 + 顶部散热镂空肋条
+    const barrel = this._part(new THREE.CylinderGeometry(0.036, 0.04, 0.36, 8), 0xdce6ec, 0, 1.055);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.064, -0.19);
     group.add(barrel);
 
-    // 顶部瞄准肋条 & 红点准星
-    const rib = this._part(new THREE.BoxGeometry(0.04, 0.025, 0.34), 0x78909c);
-    rib.position.set(0, 0.1, -0.18);
-    group.add(rib);
+    // 枪管下方全长配重护套（Underlug）与退壳杆
+    const underlug = this._part(new THREE.BoxGeometry(0.046, 0.046, 0.33), 0x8ea2b0, 0, 1.05, true);
+    underlug.position.set(0, 0.024, -0.175);
+    group.add(underlug);
 
-    const sight = this._part(new THREE.BoxGeometry(0.02, 0.035, 0.025), 0xff2a44, 0x550011);
-    sight.position.set(0, 0.12, -0.33);
-    group.add(sight);
+    const ejectorRod = this._part(new THREE.CylinderGeometry(0.011, 0.011, 0.24, 8), 0x3b4854, 0, 1.08);
+    ejectorRod.rotation.x = Math.PI / 2;
+    ejectorRod.position.set(0, 0.016, -0.14);
+    group.add(ejectorRod);
 
-    // 金黄色左轮弹巢
-    const cyl = this._part(new THREE.CylinderGeometry(0.062, 0.062, 0.12, 8), 0xffe01b);
-    cyl.rotation.x = Math.PI / 2;
-    cyl.position.set(0, 0.02, 0.03);
-    group.add(cyl);
+    // 枪口深邃黑膛口
+    const bore = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022, 0.022, 0.012, 10),
+      new THREE.MeshBasicMaterial({ color: 0x0b0b10 })
+    );
+    bore.rotation.x = Math.PI / 2;
+    bore.position.set(0, 0.064, -0.372);
+    group.add(bore);
 
-    // 机匣与木质握把
-    const frame = this._part(new THREE.BoxGeometry(0.08, 0.11, 0.16), 0x546e7a);
-    frame.position.set(0, 0.0, 0.05);
-    group.add(frame);
+    // 顶部通气肋条（主梁 + 3根立柱）
+    const topRib = this._part(new THREE.BoxGeometry(0.03, 0.014, 0.34), 0x607482, 0, 1.06);
+    topRib.position.set(0, 0.112, -0.185);
+    group.add(topRib);
+    [-0.07, -0.18, -0.29].forEach((z) => {
+      const post = this._part(new THREE.BoxGeometry(0.026, 0.02, 0.03), 0x455663, 0, 1.06);
+      post.position.set(0, 0.098, z);
+      group.add(post);
+    });
 
-    const grip = this._part(new THREE.BoxGeometry(0.072, 0.18, 0.095), 0xb85224);
-    grip.position.set(0, -0.11, 0.11);
-    grip.rotation.x = 0.28;
-    group.add(grip);
+    // 红色发光前准星 + 后照门缺口
+    const frontSight = this._part(new THREE.BoxGeometry(0.014, 0.03, 0.036), 0xff2a44, 0x660015, 1.08);
+    frontSight.position.set(0, 0.132, -0.335);
+    group.add(frontSight);
 
-    // 戴黑手套的手
-    const hand = this._part(new THREE.BoxGeometry(0.11, 0.12, 0.14), 0x262230);
-    hand.position.set(0.01, -0.13, 0.13);
-    group.add(hand);
+    const rearL = this._part(new THREE.BoxGeometry(0.014, 0.022, 0.024), 0x263238, 0, 1.08);
+    rearL.position.set(-0.022, 0.112, 0.06);
+    const rearR = this._part(new THREE.BoxGeometry(0.014, 0.022, 0.024), 0x263238, 0, 1.08);
+    rearR.position.set(0.022, 0.112, 0.06);
+    group.add(rearL, rearR);
+
+    // 精细 6 发左轮弹巢组（弹巢本体 + 6 个黄铜弹壳底火 + 凹槽）
+    const cylGroup = new THREE.Group();
+    cylGroup.position.set(0, 0.032, 0.022);
+    const cylCore = this._part(new THREE.CylinderGeometry(0.056, 0.056, 0.115, 12), 0xffe01b, 0, 1.055);
+    cylCore.rotation.x = Math.PI / 2;
+    cylGroup.add(cylCore);
+
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * Math.PI * 2;
+      const r = 0.035;
+      // 弹巢外壁减重凹槽
+      const flute = this._part(new THREE.CylinderGeometry(0.011, 0.011, 0.088, 6), 0xcfa410, 0, 1.0);
+      flute.rotation.x = Math.PI / 2;
+      flute.position.set(Math.cos(ang + Math.PI / 6) * 0.052, Math.sin(ang + Math.PI / 6) * 0.052, 0);
+      cylGroup.add(flute);
+
+      // 尾部可见的黄铜子弹底缘
+      const rim = this._part(new THREE.CylinderGeometry(0.013, 0.013, 0.014, 8), 0xd49635, 0, 1.0);
+      rim.rotation.x = Math.PI / 2;
+      rim.position.set(Math.cos(ang) * r, Math.sin(ang) * r, 0.056);
+      cylGroup.add(rim);
+    }
+    group.add(cylGroup);
+
+    // 上下机匣框架（留出弹巢窗）
+    const topStrap = this._part(new THREE.BoxGeometry(0.064, 0.024, 0.17), 0x546e7a, 0, 1.05);
+    topStrap.position.set(0, 0.095, 0.022);
+    const rearFrame = this._part(new THREE.BoxGeometry(0.068, 0.12, 0.075), 0x546e7a, 0, 1.05, true);
+    rearFrame.position.set(0, 0.035, 0.11);
+    const bottomFrame = this._part(new THREE.BoxGeometry(0.064, 0.036, 0.17), 0x455a64, 0, 1.05);
+    bottomFrame.position.set(0, -0.035, 0.025);
+    group.add(topStrap, rearFrame, bottomFrame);
+
+    // 可动击锤（开火时向后击发）
+    const hammer = this._part(new THREE.BoxGeometry(0.02, 0.052, 0.036), 0x263238, 0, 1.08);
+    hammer.position.set(0, 0.095, 0.145);
+    hammer.rotation.x = -0.35;
+    group.add(hammer);
+
+    // 扳机护圈与扳机
+    const guard = this._part(new THREE.TorusGeometry(0.036, 0.008, 6, 12), 0x37474f, 0, 1.08);
+    guard.rotation.y = Math.PI / 2;
+    guard.position.set(0, -0.068, 0.038);
+    const trigger = this._part(new THREE.BoxGeometry(0.012, 0.036, 0.014), 0xffe01b, 0, 1.08);
+    trigger.position.set(0, -0.062, 0.044);
+    trigger.rotation.x = 0.25;
+    group.add(guard, trigger);
+
+    // 胡桃木握把 + 两侧防滑贴片 + 黄铜底盖
+    const grip = this._part(new THREE.BoxGeometry(0.058, 0.185, 0.088), 0x9c421c, 0, 1.05, true);
+    grip.position.set(0, -0.105, 0.13);
+    grip.rotation.x = 0.34;
+    const panelL = this._part(new THREE.BoxGeometry(0.068, 0.135, 0.066), 0xc45d2d, 0, 1.04);
+    panelL.position.set(0, -0.105, 0.13);
+    panelL.rotation.x = 0.34;
+    const pommel = this._part(new THREE.BoxGeometry(0.066, 0.02, 0.094), 0xffe01b, 0, 1.06);
+    pommel.position.set(0, -0.192, 0.16);
+    pommel.rotation.x = 0.34;
+    group.add(grip, panelL, pommel);
+
+    group.add(this._buildGlovedHand(0.008, -0.115, 0.135));
 
     const muzzle = this._makeMuzzleStar(0xffe01b);
-    muzzle.position.set(0, 0.06, -0.4);
+    muzzle.position.set(0, 0.064, -0.4);
     group.add(muzzle);
 
-    return { group, muzzle, cylinder: cyl };
+    return { group, muzzle, cylinder: cylGroup, hammer };
   }
 
   _buildShotgun() {
     const group = new THREE.Group();
 
-    // 双联重型枪管
-    const barrelGeo = new THREE.CylinderGeometry(0.034, 0.034, 0.52, 8);
+    // 双联重型枪管 + 深邃枪口
+    const barrelGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.56, 10);
     barrelGeo.rotateX(Math.PI / 2);
-    const bL = this._part(barrelGeo, 0x607d8b);
-    bL.position.set(-0.036, 0.05, -0.22);
-    const bR = this._part(barrelGeo, 0x90a4ae);
-    bR.position.set(0.036, 0.05, -0.22);
+    const bL = this._part(barrelGeo, 0x546e7a, 0, 1.055);
+    bL.position.set(-0.034, 0.06, -0.23);
+    const bR = this._part(barrelGeo, 0x78909c, 0, 1.055);
+    bR.position.set(0.034, 0.06, -0.23);
     group.add(bL, bR);
 
-    // 红色金属机匣
-    const body = this._part(new THREE.BoxGeometry(0.13, 0.11, 0.24), 0xff2a44);
-    body.position.set(0, 0.01, 0.06);
-    group.add(body);
+    [-0.034, 0.034].forEach((bx) => {
+      const bore = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.02, 0.02, 0.012, 8),
+        new THREE.MeshBasicMaterial({ color: 0x0b0b10 })
+      );
+      bore.rotation.x = Math.PI / 2;
+      bore.position.set(bx, 0.06, -0.512);
+      group.add(bore);
+    });
 
-    // 黄色漫画警戒条
-    const stripe = this._part(new THREE.BoxGeometry(0.136, 0.032, 0.18), 0xffe01b);
-    stripe.position.set(0, 0.02, 0.05);
-    group.add(stripe);
+    // 顶部散热防烫罩 + 散热槽 + 黄铜珠准星
+    const heatShield = this._part(new THREE.BoxGeometry(0.104, 0.022, 0.34), 0x2c3842, 0, 1.05);
+    heatShield.position.set(0, 0.088, -0.24);
+    group.add(heatShield);
+    for (let i = 0; i < 5; i++) {
+      const vent = new THREE.Mesh(
+        new THREE.BoxGeometry(0.072, 0.026, 0.028),
+        new THREE.MeshBasicMaterial({ color: 0x101016 })
+      );
+      vent.position.set(0, 0.088, -0.11 - i * 0.065);
+      group.add(vent);
+    }
 
-    // 泵动木质护木
-    const pump = this._part(new THREE.BoxGeometry(0.11, 0.075, 0.2), 0xd47528);
-    pump.position.set(0, -0.02, -0.18);
-    group.add(pump);
+    const clamp = this._part(new THREE.BoxGeometry(0.114, 0.088, 0.032), 0x263238, 0, 1.06);
+    clamp.position.set(0, 0.034, -0.44);
+    const bead = this._part(new THREE.SphereGeometry(0.014, 8, 8), 0xffe01b, 0x664400, 1.1);
+    bead.position.set(0, 0.104, -0.49);
+    group.add(clamp, bead);
 
-    // 枪托
-    const stock = this._part(new THREE.BoxGeometry(0.1, 0.13, 0.22), 0xb85820);
-    stock.position.set(0, -0.06, 0.22);
-    stock.rotation.x = 0.22;
-    group.add(stock);
+    // 下置管状弹仓 + 前端旋盖
+    const magTube = this._part(new THREE.CylinderGeometry(0.026, 0.026, 0.44, 10), 0x37474f, 0, 1.055);
+    magTube.rotation.x = Math.PI / 2;
+    magTube.position.set(0, 0.008, -0.22);
+    const magCap = this._part(new THREE.CylinderGeometry(0.032, 0.032, 0.035, 8), 0xffe01b, 0, 1.06);
+    magCap.rotation.x = Math.PI / 2;
+    magCap.position.set(0, 0.008, -0.455);
+    group.add(magTube, magCap);
+
+    // 可动泵动护木组（带 5 道防滑木纹环）
+    const pumpGroup = new THREE.Group();
+    pumpGroup.position.set(0, -0.01, -0.2);
+    const pumpCore = this._part(new THREE.BoxGeometry(0.106, 0.068, 0.21), 0xc8641e, 0, 1.05, true);
+    pumpGroup.add(pumpCore);
+    for (let i = -2; i <= 2; i++) {
+      const rib = this._part(new THREE.BoxGeometry(0.114, 0.072, 0.016), 0x8f3f12, 0, 1.03);
+      rib.position.z = i * 0.036;
+      pumpGroup.add(rib);
+    }
+    group.add(pumpGroup);
+
+    // 绯红漫画重型机匣 + 顶部皮卡汀尼导轨 + 黄色警戒条
+    const receiver = this._part(new THREE.BoxGeometry(0.128, 0.118, 0.26), 0xff2a44, 0, 1.05, true);
+    receiver.position.set(0, 0.02, 0.065);
+    const stripe = this._part(new THREE.BoxGeometry(0.135, 0.028, 0.21), 0xffe01b, 0, 1.04);
+    stripe.position.set(0, 0.03, 0.06);
+    const rail = this._part(new THREE.BoxGeometry(0.056, 0.018, 0.22), 0x1e242b, 0, 1.06);
+    rail.position.set(0, 0.088, 0.065);
+    group.add(receiver, stripe, rail);
+
+    // 右侧抛壳窗（内嵌红色待抛霰弹壳）
+    const port = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.042, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0x101016 })
+    );
+    port.position.set(0.064, 0.045, 0.04);
+    group.add(port);
+
+    // 左侧侧挂弹药架（4 枚红壳黄铜底霰弹）
+    const saddle = this._part(new THREE.BoxGeometry(0.02, 0.046, 0.16), 0x1c1c24, 0, 1.06);
+    saddle.position.set(-0.072, 0.015, 0.065);
+    group.add(saddle);
+    for (let i = 0; i < 4; i++) {
+      const sz = 0.005 + i * 0.04;
+      const shell = this._part(new THREE.CylinderGeometry(0.011, 0.011, 0.064, 8), 0xff2a44, 0, 1.05);
+      shell.position.set(-0.082, 0.022, sz);
+      const brass = this._part(new THREE.CylinderGeometry(0.012, 0.012, 0.018, 8), 0xffe01b, 0, 1.04);
+      brass.position.set(-0.082, 0.054, sz);
+      group.add(shell, brass);
+    }
+
+    // 扳机护圈
+    const guard = this._part(new THREE.TorusGeometry(0.036, 0.009, 6, 12), 0x263238, 0, 1.08);
+    guard.rotation.y = Math.PI / 2;
+    guard.position.set(0, -0.055, 0.11);
+    group.add(guard);
+
+    // 实木枪托 + 黑色橡胶托垫
+    const stock = this._part(new THREE.BoxGeometry(0.095, 0.135, 0.25), 0xb8541e, 0, 1.05, true);
+    stock.position.set(0, -0.055, 0.26);
+    stock.rotation.x = 0.24;
+    const buttpad = this._part(new THREE.BoxGeometry(0.102, 0.142, 0.028), 0x1a1a22, 0, 1.05);
+    buttpad.position.set(0, -0.085, 0.38);
+    buttpad.rotation.x = 0.24;
+    group.add(stock, buttpad);
+
+    // 机匣底部装弹口（现实泵动霰弹枪从底部装填弹仓）
+    const loadingPort = new THREE.Mesh(
+      new THREE.BoxGeometry(0.058, 0.014, 0.12),
+      new THREE.MeshBasicMaterial({ color: 0x0b0b10 })
+    );
+    loadingPort.position.set(0, -0.04, 0.02);
+    group.add(loadingPort);
+
+    // 换弹时左手捏着红壳黄铜霰弹逐发塞入底部装弹口
+    const reloadShellGroup = new THREE.Group();
+    const rShellHull = this._part(new THREE.CylinderGeometry(0.014, 0.014, 0.072, 10), 0xff2a44, 0, 1.06);
+    rShellHull.rotation.x = Math.PI / 2;
+    rShellHull.position.set(0, 0, -0.012);
+    const rShellBrass = this._part(new THREE.CylinderGeometry(0.015, 0.015, 0.022, 10), 0xffe01b, 0, 1.05);
+    rShellBrass.rotation.x = Math.PI / 2;
+    rShellBrass.position.set(0, 0, 0.032);
+    const leftHand = this._part(new THREE.BoxGeometry(0.085, 0.075, 0.1), 0x262330, 0, 1.05);
+    leftHand.position.set(-0.02, -0.048, 0.045);
+    reloadShellGroup.add(rShellHull, rShellBrass, leftHand);
+    reloadShellGroup.visible = false;
+    group.add(reloadShellGroup);
+
+    group.add(this._buildGlovedHand(0.012, -0.095, 0.18));
 
     const muzzle = this._makeMuzzleStar(0xff7a00);
-    muzzle.scale.setScalar(1.45);
-    muzzle.position.set(0, 0.05, -0.52);
+    muzzle.scale.setScalar(1.55);
+    muzzle.position.set(0, 0.06, -0.55);
     group.add(muzzle);
 
-    return { group, muzzle, pump };
+    return { group, muzzle, pump: pumpGroup, reloadShell: reloadShellGroup };
   }
 
   _buildRaygun() {
     const group = new THREE.Group();
 
-    // 复古科幻粉紫枪身
-    const body = this._part(new THREE.ConeGeometry(0.095, 0.44, 8), 0xff2ebd);
-    body.rotation.x = -Math.PI / 2;
-    body.position.set(0, 0.03, -0.12);
+    // 复古科幻流线型粉紫主枪身 + 金属机身侧翼
+    const body = this._part(new THREE.CylinderGeometry(0.042, 0.098, 0.44, 12), 0xff2ebd, 0, 1.05);
+    body.rotation.x = Math.PI / 2;
+    body.position.set(0, 0.035, -0.11);
     group.add(body);
 
-    // 3 道金色散热能量环
-    [-0.12, -0.21, -0.3].forEach((z, idx) => {
-      const r = 0.095 - idx * 0.015;
-      const ring = this._part(new THREE.TorusGeometry(r, 0.016, 6, 12), 0xffe01b);
-      ring.position.set(0, 0.03, z);
+    // 侧面银色复古火箭尾翼（漫画射线枪灵魂！）
+    [-1, 1].forEach((side) => {
+      const fin = this._part(new THREE.BoxGeometry(0.016, 0.068, 0.24), 0xe2eaf2, 0, 1.06, true);
+      fin.position.set(side * 0.095, 0.025, -0.02);
+      fin.rotation.z = side * -0.25;
+      group.add(fin);
+
+      const trim = this._part(new THREE.BoxGeometry(0.02, 0.018, 0.2), 0x00f0ff, 0x006688, 1.04);
+      trim.position.set(side * 0.098, 0.032, -0.03);
+      group.add(trim);
+    });
+
+    // 顶部玻璃能量导管 + 青色发光等离子芯
+    const conduit = this._part(new THREE.CylinderGeometry(0.018, 0.018, 0.32, 10), 0x00f0ff, 0x0099bb, 1.06);
+    conduit.rotation.x = Math.PI / 2;
+    conduit.position.set(0, 0.112, -0.12);
+    group.add(conduit);
+
+    // 3 道金色渐缩粒子加速环 + 枪口三叉发射天线
+    [-0.1, -0.2, -0.29].forEach((z, idx) => {
+      const r = 0.092 - idx * 0.016;
+      const ring = this._part(new THREE.TorusGeometry(r, 0.015, 8, 16), 0xffe01b, 0x332200, 1.06);
+      ring.position.set(0, 0.035, z);
       group.add(ring);
     });
 
-    // 青色发光能量核心球
-    const core = this._part(new THREE.SphereGeometry(0.072, 10, 10), 0x00f0ff, 0x0088aa);
-    core.position.set(0, 0.05, 0.06);
-    group.add(core);
+    // 枪口发光发射盘 + 3 根前伸触角
+    const dish = this._part(new THREE.CylinderGeometry(0.056, 0.034, 0.03, 12), 0xffe01b, 0, 1.06);
+    dish.rotation.x = Math.PI / 2;
+    dish.position.set(0, 0.035, -0.34);
+    const emitter = this._part(new THREE.SphereGeometry(0.034, 10, 10), 0x00f0ff, 0x00aacc, 1.08);
+    emitter.position.set(0, 0.035, -0.365);
+    group.add(dish, emitter);
 
-    const grip = this._part(new THREE.BoxGeometry(0.075, 0.17, 0.09), 0x262236);
-    grip.position.set(0, -0.1, 0.09);
-    grip.rotation.x = 0.25;
-    group.add(grip);
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI * 2 + Math.PI / 6;
+      const prong = this._part(new THREE.ConeGeometry(0.012, 0.085, 6), 0xe2eaf2, 0, 1.08);
+      prong.rotation.x = -Math.PI / 2;
+      prong.position.set(Math.cos(ang) * 0.048, 0.035 + Math.sin(ang) * 0.048, -0.375);
+      group.add(prong);
+    }
+
+    // 可弹出能量电池核心组（外黄铜环 + 内发光菱形晶核）
+    const coreGroup = new THREE.Group();
+    coreGroup.position.set(0, 0.055, 0.075);
+    const coreBall = this._part(new THREE.OctahedronGeometry(0.068, 1), 0x00f0ff, 0x0099bb, 1.06);
+    const coreCage = this._part(new THREE.TorusGeometry(0.074, 0.01, 6, 14), 0xffe01b, 0, 1.06);
+    coreCage.rotation.x = Math.PI / 2;
+    coreGroup.add(coreBall, coreCage);
+    group.add(coreGroup);
+
+    // 尾部朝向玩家的漫画能量仪表盘
+    const dialHousing = this._part(new THREE.CylinderGeometry(0.046, 0.046, 0.03, 12), 0x262236, 0, 1.06);
+    dialHousing.rotation.x = Math.PI / 2;
+    dialHousing.position.set(0, 0.045, 0.145);
+    const dialFace = new THREE.Mesh(
+      new THREE.CircleGeometry(0.036, 12),
+      new THREE.MeshBasicMaterial({ color: 0x38e54d })
+    );
+    dialFace.position.set(0, 0.045, 0.162);
+    const needle = new THREE.Mesh(
+      new THREE.BoxGeometry(0.006, 0.028, 0.004),
+      new THREE.MeshBasicMaterial({ color: 0x101016 })
+    );
+    needle.position.set(0.008, 0.052, 0.164);
+    needle.rotation.z = -0.5;
+    group.add(dialHousing, dialFace, needle);
+
+    // 科幻握把 + 护圈 + 手套
+    const grip = this._part(new THREE.BoxGeometry(0.068, 0.17, 0.088), 0x2c2640, 0, 1.05, true);
+    grip.position.set(0, -0.098, 0.095);
+    grip.rotation.x = 0.28;
+    const guard = this._part(new THREE.TorusGeometry(0.034, 0.008, 6, 10), 0xffe01b, 0, 1.08);
+    guard.rotation.y = Math.PI / 2;
+    guard.position.set(0, -0.052, 0.025);
+    group.add(grip, guard);
+
+    group.add(this._buildGlovedHand(0.006, -0.105, 0.11));
 
     const muzzle = this._makeMuzzleStar(0x00f0ff);
-    muzzle.position.set(0, 0.03, -0.38);
+    muzzle.position.set(0, 0.035, -0.42);
     group.add(muzzle);
 
-    return { group, muzzle, core };
+    return { group, muzzle, core: coreGroup, coreBall };
   }
 
   _buildPunchFist() {
     const g = new THREE.Group();
-    const glove = this._part(new THREE.BoxGeometry(0.24, 0.22, 0.26), 0xff2a44);
-    const cuff = this._part(new THREE.CylinderGeometry(0.11, 0.12, 0.16, 8), 0xffe01b);
+    // 英雄赤红漫画拳套主体
+    const mainFist = this._part(new THREE.BoxGeometry(0.22, 0.18, 0.22), 0xff2a44, 0, 1.055, true);
+    g.add(mainFist);
+
+    // 4 个独立凸起指节（力量感更强）
+    for (let i = 0; i < 4; i++) {
+      const knuckle = this._part(new THREE.SphereGeometry(0.038, 8, 8), 0xff5268, 0, 1.08);
+      knuckle.position.set(-0.075 + i * 0.05, 0.045, -0.105);
+      g.add(knuckle);
+    }
+
+    // 卷握拇指
+    const thumb = this._part(new THREE.BoxGeometry(0.07, 0.075, 0.14), 0xd91c34, 0, 1.06);
+    thumb.position.set(0.125, -0.02, -0.04);
+    thumb.rotation.y = -0.35;
+    g.add(thumb);
+
+    // 金色装甲护腕 + 铆钉 + 深色前臂袖
+    const cuff = this._part(new THREE.CylinderGeometry(0.115, 0.125, 0.11, 10), 0xffe01b, 0, 1.06);
     cuff.rotation.x = Math.PI / 2;
-    cuff.position.set(0, 0, 0.18);
-    g.add(glove, cuff);
+    cuff.position.set(0, 0, 0.155);
+    const arm = this._part(new THREE.CylinderGeometry(0.1, 0.11, 0.2, 10), 0x22202e, 0, 1.05);
+    arm.rotation.x = Math.PI / 2;
+    arm.position.set(0, -0.01, 0.29);
+    g.add(cuff, arm);
+
     g.position.set(-0.28, -0.25, -0.45);
     return g;
   }
@@ -404,37 +693,138 @@ export class WeaponSystem3D {
     this.punchTimer = Math.max(0, this.punchTimer - dt);
     if (!this.camera) return;
 
-    // 武器位置、后坐力与动画
+    // 武器位置、后坐力与三段式换弹夹动画
     const w = this.current;
     const m = this.currentModel;
     const basePos = new THREE.Vector3().lerpVectors(w.hipPos, w.adsPos, this.adsAmount);
     const bobScale = 1 - this.adsAmount * 0.72;
     const bobX = Math.cos(this.swayTime) * 0.014 * bobScale;
     const bobY = Math.abs(Math.sin(this.swayTime)) * 0.016 * bobScale;
-    const reloadDip = this.reloading ? Math.sin((this.reloadTimer / w.reloadTime) * Math.PI) * 0.24 : 0;
     const switchDip = this.switchAnim * 0.28;
 
+    let reloadPosX = 0;
+    let reloadPosY = 0;
+    let reloadPosZ = 0;
+    let reloadRotX = 0;
+    let reloadRotY = 0;
+    let reloadRotZ = 0;
+
+    if (this.reloading) {
+      // p: 0 -> 1 换弹进度
+      const p = Math.max(0, Math.min(1, 1 - this.reloadTimer / w.reloadTime));
+      const arc = Math.sin(p * Math.PI);
+      const snap = p > 0.82 ? Math.sin(((p - 0.82) / 0.18) * Math.PI) : 0;
+
+      if (w.id === "magnum") {
+        // 左轮侧倾甩出弹巢旋转装弹，再清脆合上
+        reloadPosX = -0.05 * arc;
+        reloadPosY = -0.09 * arc + snap * 0.03;
+        reloadRotX = 0.28 * arc + snap * 0.15;
+        reloadRotZ = 0.78 * arc;
+        if (m.cylinder) {
+          m.cylinder.position.x = -0.095 * Math.sin(Math.min(1, p * 1.15) * Math.PI);
+          m.cylinder.rotation.z += dt * 18;
+        }
+      } else if (w.id === "shotgun") {
+        // 真实泵动霰弹枪三段式换弹：侧翻露出底部装弹口 -> 左手逐发推入红壳霰弹 -> 回正拉动护木上膛一次
+        if (p < 0.16) {
+          const t = p / 0.16;
+          reloadPosX = -0.04 * t;
+          reloadPosY = -0.03 * t;
+          reloadRotX = 0.24 * t;
+          reloadRotZ = -0.72 * t;
+          if (m.reloadShell) m.reloadShell.visible = false;
+          if (m.pump) m.pump.position.z = -0.2;
+        } else if (p < 0.76) {
+          const insertPhase = (p - 0.16) / 0.6; // 0 -> 1 内塞入 3 发霰弹
+          const shellProgress = (insertPhase * 3) % 1;
+          const nudge = shellProgress > 0.55 ? Math.sin(((shellProgress - 0.55) / 0.45) * Math.PI) : 0;
+          reloadPosX = -0.04;
+          reloadPosY = -0.03 + nudge * 0.018;
+          reloadRotX = 0.24 + nudge * 0.05;
+          reloadRotZ = -0.72;
+          if (m.pump) m.pump.position.z = -0.2;
+          if (m.reloadShell) {
+            m.reloadShell.visible = true;
+            // 霰弹从下方抬起并沿枪管方向推入底部装弹口
+            const lift = Math.min(1, shellProgress / 0.5);
+            const push = Math.max(0, (shellProgress - 0.45) / 0.55);
+            m.reloadShell.position.set(
+              -0.02 * (1 - lift),
+              -0.18 + lift * 0.135,
+              0.08 - push * 0.11
+            );
+            m.reloadShell.rotation.set(0.15 * (1 - push), 0, 0);
+          }
+        } else {
+          // 回正并单次果断拉栓上膛（chk-chk!）
+          const t = (p - 0.76) / 0.24;
+          const settle = Math.max(0, 1 - t * 2.2);
+          reloadPosX = -0.04 * settle;
+          reloadPosY = -0.03 * settle;
+          reloadRotX = 0.24 * settle + Math.sin(t * Math.PI) * 0.12;
+          reloadRotZ = -0.72 * settle;
+          if (m.reloadShell) m.reloadShell.visible = false;
+          if (m.pump) {
+            const rack = t > 0.2 ? Math.sin(((t - 0.2) / 0.8) * Math.PI) * 0.11 : 0;
+            m.pump.position.z = -0.2 + rack;
+          }
+        }
+      } else {
+        // 射线枪倾斜弹出能量电池核心再拍回
+        reloadPosY = -0.08 * arc + snap * 0.035;
+        reloadRotX = 0.25 * arc;
+        reloadRotY = -0.25 * arc;
+        reloadRotZ = 0.62 * arc;
+        if (m.core) {
+          const drop = p < 0.72 ? Math.sin((p / 0.72) * Math.PI) : 0;
+          m.core.position.y = 0.055 - drop * 0.16;
+          m.core.scale.setScalar(1 + snap * 0.22);
+        }
+      }
+    } else {
+      // 非换弹状态平滑复位可动部件
+      if (m.cylinder) m.cylinder.position.x += (0 - m.cylinder.position.x) * Math.min(1, dt * 16);
+      if (m.reloadShell) m.reloadShell.visible = false;
+      if (m.pump) {
+        // 霰弹枪开火后半段自动拉栓动作
+        const pumpRack = w.id === "shotgun" && this.cooldown > 0.08 && this.cooldown < 0.38
+          ? Math.sin(((this.cooldown - 0.08) / 0.3) * Math.PI) * 0.095
+          : 0;
+        const targetZ = -0.2 + pumpRack;
+        m.pump.position.z += (targetZ - m.pump.position.z) * Math.min(1, dt * 22);
+      }
+      if (m.core) {
+        m.core.position.y += (0.055 - m.core.position.y) * Math.min(1, dt * 16);
+        m.core.scale.setScalar(1 + Math.sin(this.swayTime * 2) * 0.06);
+      }
+    }
+
     this.root.position.set(
-      basePos.x + bobX,
-      basePos.y + bobY - reloadDip - switchDip,
-      basePos.z + this.recoil * 0.09
+      basePos.x + bobX + reloadPosX,
+      basePos.y + bobY + reloadPosY - switchDip,
+      basePos.z + this.recoil * 0.09 + reloadPosZ
     );
     this.root.rotation.set(
-      this.recoil * 0.24 - reloadDip * 1.4,
-      0,
-      this.reloading ? 0.35 : 0
+      this.recoil * 0.24 + reloadRotX,
+      reloadRotY,
+      reloadRotZ
     );
 
-    // 枪口闪光与旋转
+    // 枪口闪光、左轮弹巢/击锤与射线枪晶核旋转
     m.muzzle.visible = this.muzzleFlash > 0;
     if (m.muzzle.visible) {
       m.muzzle.rotation.z += dt * 32;
     }
-    if (m.cylinder && this.recoil > 0.1) {
-      m.cylinder.rotation.y += dt * 12;
+    if (m.cylinder && !this.reloading && this.recoil > 0.1) {
+      m.cylinder.rotation.z += dt * 12;
     }
-    if (m.core) {
-      m.core.scale.setScalar(1 + Math.sin(this.swayTime * 2) * 0.06);
+    if (m.hammer) {
+      m.hammer.rotation.x = -0.35 - Math.min(0.65, this.recoil * 0.65);
+    }
+    if (m.coreBall) {
+      m.coreBall.rotation.y += dt * (this.reloading ? 10 : 2.6);
+      m.coreBall.rotation.x += dt * 1.4;
     }
 
     // 近战重拳动画

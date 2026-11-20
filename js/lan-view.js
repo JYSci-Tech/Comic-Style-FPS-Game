@@ -9,9 +9,12 @@ export class LanView {
     this.projectiles = new Map();
     this.localPosition = new THREE.Vector3();
     this.delta = new THREE.Vector3();
+    this.deathTilt = 0;
   }
 
   clear() {
+    this.deathTilt = 0;
+    if (this.engine.weapons?.root) this.engine.weapons.root.visible = true;
     for (const { root } of this.avatars.values()) {
       for (const mesh of [...root.children]) this.removeMesh(mesh);
       root.removeFromParent();
@@ -41,7 +44,12 @@ export class LanView {
       engine.player.fireTimer = 0;
       engine.player.hurtTimer = 0;
       engine.shake = 0;
+      this.deathTilt = 0;
+      if (engine.weapons.root) engine.weapons.root.visible = true;
       engine.weapons.resetAll();
+      engine.weapons.select(player.weapon);
+      engine.weapons.switchAnim = 0;
+      engine.weapons.cooldown = 0;
     }
     this.localPosition.fromArray(player.p);
     engine.player.hp = player.hp;
@@ -50,6 +58,7 @@ export class LanView {
     engine.score = snapshot.mode === "pvp" ? player.kills : snapshot.score;
     engine.kills = snapshot.kills;
     engine.combo = snapshot.combo;
+    if (typeof snapshot.t === "number") engine.levelTime = snapshot.t;
 
     const weapons = engine.weapons;
     weapons.select(player.weapon);
@@ -69,11 +78,27 @@ export class LanView {
       enemy.alive = enemy.hp > 0;
       if (changedRound) enemy.root.position.fromArray(this.enemies[i]);
     }
-    snapshot.props.forEach((active, index) => {
+    snapshot.props.forEach((entry, index) => {
       const prop = engine.props[index];
+      if (!prop) return;
+      const active = Array.isArray(entry) ? entry[0] : entry;
+      const px = Array.isArray(entry) ? entry[1] : prop.x;
+      const pz = Array.isArray(entry) ? entry[2] : prop.z;
       if (prop.active && !active) {
         prop.active = false;
         prop.mesh.removeFromParent();
+      } else if (!prop.active && active) {
+        prop.active = true;
+        prop.x = px;
+        prop.z = pz;
+        const baseY = prop.type === "barrel" ? 0.725 : prop.type === "medkit" ? 0.55 : prop.type === "ammo" ? 0.52 : 0.11;
+        prop.mesh.position.set(px, baseY, pz);
+        engine.levelRoot.add(prop.mesh);
+      } else if (active && (prop.x !== px || prop.z !== pz)) {
+        prop.x = px;
+        prop.z = pz;
+        prop.mesh.position.x = px;
+        prop.mesh.position.z = pz;
       }
     });
     this.updateProjectiles(snapshot.projectiles);
@@ -153,7 +178,7 @@ export class LanView {
         engine.player.fireTimer = 0.22;
         engine.weapons.recoil = weapon.recoilKick;
         engine.weapons.muzzleFlash = 0.075;
-        engine.shake = Math.min(14, engine.shake + weapon.recoilKick * 4.2);
+        engine.addShotRecoil(weapon.recoilKick);
       }
       if (local || origin.distanceToSquared(engine.player.pos) < 30 ** 2) {
         engine.audio[["playMagnum", "playShotgun", "playRaygun"][event.weapon]]();
@@ -171,12 +196,16 @@ export class LanView {
       engine.audio.playHit(event.crit);
       engine.callbacks.onHit(event.crit);
     } else if (event.type === "hurt" && local) {
-      engine.player.hurtTimer = 0.25;
-      engine.shake = Math.min(16, engine.shake + 8);
+      engine.player.hurtTimer = 0.3;
+      engine.shake = Math.min(18, engine.shake + 11);
       engine.audio.playHurt();
       engine.callbacks.onPlayerHurt();
+    } else if (event.type === "death" && local) {
+      engine.shake = 18;
+      engine.audio.playEnemyDown();
+      engine.callbacks.onPlayerHurt();
     } else if (event.type === "popup") {
-      engine.spawnPopup(new THREE.Vector3().fromArray(event.at), event.text, event.color, event.scale);
+      engine.spawnPopup(new THREE.Vector3().fromArray(event.at), event.text, event.color, event.scale, event.kind || "bubble");
     } else if (event.type === "explosion") {
       const at = new THREE.Vector3().fromArray(event.at);
       engine._spawnShockwave(at);
@@ -192,19 +221,32 @@ export class LanView {
     const player = engine.player;
     const alpha = 1 - Math.exp(-dt * 24);
     const moving = player.pos.distanceToSquared(this.localPosition) > 0.001;
+    player.moveSpeedRatio += ((moving ? 1 : 0) - (player.moveSpeedRatio || 0)) * Math.min(1, dt * 14);
+    player.dashTimer = this.me?.dashing ? 0.1 : 0;
     player.pos.lerp(this.localPosition, alpha);
     if (moving && player.onGround) player.bobPhase += dt * 11.5;
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.fireTimer = Math.max(0, player.fireTimer - dt);
-    engine.shake = Math.max(0, engine.shake - dt * 42);
+    engine._decayCameraRecoil(dt);
     engine.speedLineAlpha = this.me.dashing ? 1 : Math.max(0, engine.speedLineAlpha - dt * 3);
     engine.weapons.update(dt, moving && player.onGround);
-    const fov = this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount);
+    const baseFov = this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount);
+    const fov = baseFov + engine.recoilFovKick;
     if (Math.abs(engine.camera.fov - fov) > 0.05) {
       engine.camera.fov += (fov - engine.camera.fov) * alpha;
       engine.camera.updateProjectionMatrix();
     }
     engine._syncCamera();
+    const isDead = this.me && this.me.hp <= 0;
+    const targetTilt = isDead ? 1 : 0;
+    this.deathTilt += (targetTilt - this.deathTilt) * Math.min(1, dt * 8);
+    if (this.deathTilt > 0.005) {
+      engine.camera.position.y -= this.deathTilt * 0.85;
+      engine.camera.rotation.z = this.deathTilt * 0.42;
+    }
+    if (engine.weapons.root) engine.weapons.root.visible = !isDead;
+    engine.levelTime += dt;
+    engine._updateDynamics(dt, [engine.player], false);
     engine._updateProps(dt, false);
     engine._updateFX(dt);
 
