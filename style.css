@@ -1296,6 +1296,14 @@ html, body {
   transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
+.aaa-menu-btn.subtle {
+  width: 72%;
+  font-size: 16px;
+  padding: 9px 18px;
+  border-right-color: var(--yellow);
+  background: rgba(15, 15, 22, 0.76);
+}
+
 .aaa-menu-btn:hover {
   transform: skewX(-7deg) translateX(-12px);
   background: var(--cyan);
@@ -1320,14 +1328,6 @@ html, body {
   background: var(--red);
   color: #fff;
   border-right-color: var(--yellow);
-}
-
-.aaa-menu-btn.subtle {
-  width: 72%;
-  font-size: 16px;
-  padding: 9px 18px;
-  border-right-color: var(--yellow);
-  background: rgba(15, 15, 22, 0.76);
 }
 
 .guide-modal {
