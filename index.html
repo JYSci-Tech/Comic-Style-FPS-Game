@@ -270,7 +270,7 @@
       </section>
     </div>
 
-    <!-- 关卡过场漫画页 -->
+    <!-- 关卡过场漫画页（只显示本局结果） -->
     <div id="intermission-screen" class="overlay-screen hidden">
       <div class="comic-modal">
         <div id="inter-banner" class="result-status-banner victory">★ 关卡通关 · STAGE CLEARED! ★</div>
@@ -278,14 +278,26 @@
         <h2 class="modal-title" id="inter-title">MEANWHILE...</h2>
         <p class="modal-desc" id="inter-desc"></p>
         <div class="modal-stats" id="inter-stats"></div>
-        <div id="weapon-draft" class="weapon-draft hidden">
-          <div class="draft-title">★ 通关奖励：任选一把新武器带入下一期 ★</div>
-          <div id="weapon-draft-cards" class="draft-cards"></div>
-        </div>
         <p id="inter-wait" class="result-wait-hint hidden"></p>
         <div id="inter-actions" class="cover-actions">
           <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
           <button id="btn-home-inter" class="comic-btn secondary">回到首页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全屏战前武器选择界面（点击进入下一期后、开打前全屏显示） -->
+    <div id="weapon-select-screen" class="overlay-screen weapon-select-screen hidden">
+      <div class="weapon-select-wrap">
+        <div class="ws-header">
+          <div class="modal-tag" id="ws-tag">ARMORY · ISSUE #2</div>
+          <h2 class="modal-title ws-title" id="ws-title">选择你的新武器!</h2>
+          <p class="ws-subtitle" id="ws-subtitle"></p>
+        </div>
+        <div id="ws-cards" class="ws-cards"></div>
+        <div class="cover-actions ws-actions">
+          <button id="btn-ws-confirm" class="comic-btn primary" type="button" disabled>请先点击选择一把武器</button>
+          <button id="btn-ws-back" class="comic-btn secondary" type="button">返回对局结果</button>
         </div>
       </div>
     </div>

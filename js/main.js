@@ -4,6 +4,7 @@ import { CELL_SIZE, COMIC_LEVELS } from "./levels.js";
 import { ComicFPS3DEngine } from "./engine.js";
 import { LanClient } from "./lan.js";
 import { KILL_LIMIT } from "./lan-rules.js";
+import { getWeaponArtSVG } from "./weapon-art.js";
 
 const SAVE_KEY = "ink_and_iron_checkpoint_v1";
 
@@ -31,8 +32,13 @@ const reloadHud = document.getElementById("reload-hud");
 const reloadHudText = document.getElementById("reload-hud-text");
 const reloadFill = document.getElementById("reload-fill");
 const sniperScope = document.getElementById("sniper-scope");
-const weaponDraft = document.getElementById("weapon-draft");
-const weaponDraftCards = document.getElementById("weapon-draft-cards");
+const weaponSelectScreen = document.getElementById("weapon-select-screen");
+const wsTag = document.getElementById("ws-tag");
+const wsTitle = document.getElementById("ws-title");
+const wsSubtitle = document.getElementById("ws-subtitle");
+const wsCards = document.getElementById("ws-cards");
+const btnWsConfirm = document.getElementById("btn-ws-confirm");
+const btnWsBack = document.getElementById("btn-ws-back");
 const killPanels = document.getElementById("kill-panels");
 
 const hudIssue = document.getElementById("hud-issue");
@@ -72,7 +78,7 @@ const btnHomeEnd = document.getElementById("btn-home-end");
 const audio = new ComicAudio();
 const assets = new ComicAssets();
 
-let state = "menu"; // menu | playing | paused | intermission | gameover | victory | lan
+let state = "menu"; // menu | playing | paused | intermission | weaponselect | gameover | victory | lan
 let hitmarkerTimer = 0;
 let hurtFlashTimeout = null;
 let killPanelTimeout = null;
@@ -80,12 +86,35 @@ let resultDelayTimer = null;
 let currentCheckpoint = null;
 let lastWeaponIdx = 0;
 let pendingUnlockIdx = null;
+let pendingTargetLevel = 0;
+let pendingKeepStats = true;
 
 const WEAPON_SLOT_LABELS = ["1. MAGNUM", "2. SHOTGUN", "3. RAYGUN", "4. SNIPER"];
 const WEAPON_DRAFT_META = {
-  1: { name: "THE BOOMSTICK", role: "2号位 · 双管泵动霰弹枪", desc: "近距 8 弹丸超高爆发，清场与打重装利器" },
-  2: { name: "ZAP-O-MATIC", role: "3号位 · 复古科幻射线枪", desc: "全自动高速能量连射，中近距火力压制" },
-  3: { name: "DEADEYE .50", role: "4号位 · 4倍镜重型狙击枪", desc: "右键高倍开镜，爆头 2.5x 一枪秒杀强敌" },
+  0: {
+    name: "THE EQUALIZER",
+    role: "1号位 · .44 左轮手枪",
+    desc: "备弹无限，换弹干脆，稳健可靠的全能随身武器",
+    stats: { power: 68, rate: 58, range: 78 },
+  },
+  1: {
+    name: "THE BOOMSTICK",
+    role: "2号位 · 双管泵动霰弹枪",
+    desc: "近距 8 弹丸超高爆发，清场与打重装利器",
+    stats: { power: 96, rate: 34, range: 42 },
+  },
+  2: {
+    name: "ZAP-O-MATIC",
+    role: "3号位 · 复古科幻射线枪",
+    desc: "全自动高速能量连射，中近距火力压制",
+    stats: { power: 54, rate: 95, range: 72 },
+  },
+  3: {
+    name: "DEADEYE .50",
+    role: "4号位 · 4倍镜重型狙击枪",
+    desc: "右键高倍开镜，爆头 2.5x 一枪秒杀强敌",
+    stats: { power: 100, rate: 24, range: 100 },
+  },
 };
 
 const HURT_WORDS = ["OUCH!", "HIT!", "BAM!", "ZAP!"];
@@ -300,6 +329,7 @@ function hideAllScreens() {
   guideScreen.classList.add("hidden");
   pauseScreen.classList.add("hidden");
   interScreen.classList.add("hidden");
+  weaponSelectScreen.classList.add("hidden");
   endScreen.classList.add("hidden");
 }
 
@@ -319,6 +349,11 @@ function continueSavedGame() {
   audio.init();
   const saved = readSavedCheckpoint();
   applyCheckpoint(saved);
+  const unlockedCount = engine.weapons.unlocked.filter(Boolean).length;
+  if (saved && saved.levelIdx > 0 && unlockedCount <= saved.levelIdx && unlockedCount < 4) {
+    openWeaponSelect(saved.levelIdx, false);
+    return;
+  }
   hideAllScreens();
   hud.classList.remove("hidden");
   state = "playing";
@@ -390,63 +425,106 @@ function showIntermission() {
   interScreen.classList.remove("hidden", "result-victory", "result-defeat");
   void interScreen.offsetWidth;
   interScreen.classList.add("result-victory");
-
-  // 每通关一局，如果还有未解锁武器，弹出武器自选卡片
-  pendingUnlockIdx = null;
-  const lockedIndices = engine.weapons.weapons
-    .map((_, idx) => idx)
-    .filter((idx) => idx > 0 && !engine.weapons.isUnlocked(idx));
-
-  if (lockedIndices.length > 0) {
-    weaponDraft.classList.remove("hidden");
-    weaponDraftCards.innerHTML = "";
-    btnNextIssue.disabled = true;
-    btnNextIssue.textContent = "请先选择一把新武器";
-
-    for (const idx of lockedIndices) {
-      const meta = WEAPON_DRAFT_META[idx];
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "draft-card";
-      card.innerHTML = `
-        <div class="draft-card-name">${meta.name}</div>
-        <div class="draft-card-role">${meta.role}</div>
-        <div class="draft-card-desc">${meta.desc}</div>
-      `;
-      card.addEventListener("click", () => {
-        pendingUnlockIdx = idx;
-        weaponDraftCards.querySelectorAll(".draft-card").forEach((c) => c.classList.remove("selected"));
-        card.classList.add("selected");
-        btnNextIssue.disabled = false;
-        btnNextIssue.textContent = `装备 ${meta.name} · 进入下一期!`;
-      });
-      weaponDraftCards.appendChild(card);
-    }
-  } else {
-    weaponDraft.classList.add("hidden");
-    btnNextIssue.disabled = false;
-    btnNextIssue.textContent = "进入下一期!";
-  }
-
   scheduleActionReveal(document.getElementById("inter-actions"), document.getElementById("inter-wait"), 2500);
 }
 
-function nextIssue() {
-  const nextIdx = engine.levelIdx + 1;
+function openWeaponSelect(targetIdx, keepStats = true) {
+  state = "weaponselect";
+  pendingTargetLevel = targetIdx;
+  pendingKeepStats = keepStats;
+  pendingUnlockIdx = null;
+  engine.mouseDown = false;
+  engine.setAds(false);
+  sniperScope.classList.add("hidden");
+  engine.keys = {};
+  hud.classList.add("hidden");
+
+  const nextLvl = COMIC_LEVELS[targetIdx];
+  const lockedIndices = engine.weapons.weapons
+    .map((_, idx) => idx)
+    .filter((idx) => idx > 0 && !engine.weapons.isUnlocked(idx));
+  const isUnlockPick = lockedIndices.length > 0;
+  const candidateIndices = isUnlockPick ? lockedIndices : [0, 1, 2, 3];
+
+  wsTag.textContent = `ARMORY · ${nextLvl.issue} (${nextLvl.name})`;
+  wsTitle.textContent = isUnlockPick ? "选择解锁一把新武器!" : "选择本局首发武器!";
+  wsSubtitle.textContent = isUnlockPick
+    ? `即将进入 ${nextLvl.issue} · 点击武器卡片挑选你的新装备`
+    : `全武器已集齐！挑选一把趁手武器率先出战 ${nextLvl.issue}`;
+
+  btnWsBack.textContent = keepStats ? "返回对局结果" : "回到首页";
+  btnWsConfirm.disabled = true;
+  btnWsConfirm.textContent = "请先点击选择一把武器";
+  wsCards.innerHTML = "";
+
+  for (const idx of candidateIndices) {
+    const w = engine.weapons.weapons[idx];
+    const meta = WEAPON_DRAFT_META[idx];
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "ws-card";
+    card.innerHTML = `
+      <span class="ws-card-badge">${isUnlockPick ? "NEW UNLOCK" : "已解锁"}</span>
+      <div class="ws-art-frame">${getWeaponArtSVG(w.id)}</div>
+      <div class="ws-card-name">${meta.name}</div>
+      <div class="ws-card-role">${meta.role}</div>
+      <div class="ws-card-desc">${meta.desc}</div>
+      <div class="ws-stats">
+        <div class="ws-stat-row">
+          <span>威力</span>
+          <div class="ws-stat-bar"><div class="ws-stat-fill" style="width:${meta.stats.power}%"></div></div>
+        </div>
+        <div class="ws-stat-row">
+          <span>射速</span>
+          <div class="ws-stat-bar"><div class="ws-stat-fill" style="width:${meta.stats.rate}%"></div></div>
+        </div>
+        <div class="ws-stat-row">
+          <span>射程</span>
+          <div class="ws-stat-bar"><div class="ws-stat-fill" style="width:${meta.stats.range}%"></div></div>
+        </div>
+      </div>
+    `;
+    card.addEventListener("click", () => {
+      audio.init();
+      audio.playReload();
+      pendingUnlockIdx = idx;
+      wsCards.querySelectorAll(".ws-card").forEach((c) => {
+        c.classList.remove("selected");
+        const b = c.querySelector(".ws-card-badge");
+        if (b) b.textContent = isUnlockPick ? "NEW UNLOCK" : "已解锁";
+      });
+      card.classList.add("selected");
+      const badge = card.querySelector(".ws-card-badge");
+      if (badge) badge.textContent = "已选定 ✓";
+      btnWsConfirm.disabled = false;
+      btnWsConfirm.textContent = `装备 ${meta.name} · 开始 ${nextLvl.issue}!`;
+    });
+    wsCards.appendChild(card);
+  }
+
+  hideAllScreens();
+  weaponSelectScreen.classList.remove("hidden");
+}
+
+function confirmWeaponAndStart() {
+  if (pendingUnlockIdx === null) return;
   const chosen = pendingUnlockIdx;
-  if (chosen !== null) {
+  const targetIdx = pendingTargetLevel;
+
+  if (pendingKeepStats) {
+    engine.weapons.unlock(chosen);
+    const savedUnlocks = [...engine.weapons.unlocked];
+    engine.loadLevel(targetIdx, true);
+    engine.weapons.setUnlocked(savedUnlocks);
+  } else {
     engine.weapons.unlock(chosen);
   }
-  const savedUnlocks = [...engine.weapons.unlocked];
-  engine.loadLevel(nextIdx, true);
-  engine.weapons.setUnlocked(savedUnlocks);
-  if (chosen !== null) {
-    engine.weapons.select(chosen);
-    engine.weapons.switchAnim = 0;
-    engine.weapons.cooldown = 0;
-  }
+
+  engine.weapons.select(chosen);
+  engine.weapons.switchAnim = 0;
+  engine.weapons.cooldown = 0;
   pendingUnlockIdx = null;
-  saveCheckpoint(nextIdx);
+  saveCheckpoint(targetIdx);
   hideAllScreens();
   hud.classList.remove("hidden");
   state = "playing";
@@ -497,7 +575,20 @@ btnRestartPause.addEventListener("click", startNewGame);
 btnHomePause.addEventListener("click", goHome);
 btnNextIssue.addEventListener("click", () => {
   audio.init();
-  nextIssue();
+  openWeaponSelect(engine.levelIdx + 1, true);
+});
+btnWsConfirm.addEventListener("click", () => {
+  audio.init();
+  confirmWeaponAndStart();
+});
+btnWsBack.addEventListener("click", () => {
+  if (pendingKeepStats) {
+    weaponSelectScreen.classList.add("hidden");
+    interScreen.classList.remove("hidden");
+    state = "intermission";
+  } else {
+    goHome();
+  }
 });
 btnHomeInter.addEventListener("click", goHome);
 btnRetryLevel.addEventListener("click", retryCurrentLevel);
