@@ -18,6 +18,7 @@ export function createPlayer() {
     hurtTimer: 0,
     fireTimer: 0,
     bobPhase: 0,
+    moveSpeedRatio: 0,
   };
 }
 
@@ -70,6 +71,9 @@ export class ComicFPS3DEngine {
 
     this.enemies = [];
     this.props = [];
+    this.movers = [];
+    this.lasers = [];
+    this.levelTime = 0;
     this.enemyProjectiles = [];
     this.projectileId = 0;
     this.tracers = [];
@@ -84,6 +88,9 @@ export class ComicFPS3DEngine {
     this.combo = 0;
     this.comboTimer = 0;
     this.shake = 0;
+    this.recoilPitch = 0;
+    this.recoilRoll = 0;
+    this.recoilFovKick = 0;
     this.hitstop = 0;
     this.speedLineAlpha = 0;
 
@@ -128,6 +135,9 @@ export class ComicFPS3DEngine {
     this._clearGroup(this.levelRoot);
     this.enemies = [];
     this.props = [];
+    this.movers = [];
+    this.lasers = [];
+    this.levelTime = 0;
     this.enemyProjectiles = [];
     this.projectileId = 0;
     this.tracers = [];
@@ -242,9 +252,105 @@ export class ComicFPS3DEngine {
     if (!arena) lvl.enemies.forEach((e, idx) => this._spawnEnemy(e, idx));
     // 生成 3D 道具与油桶
     lvl.props.forEach((p, idx) => this._spawnProp(p, idx));
+    // 生成移动方块/浮空平台与周期激光封锁线
+    if (lvl.movers) lvl.movers.forEach((m, idx) => this._spawnMover(m, idx));
+    if (lvl.lasers) lvl.lasers.forEach((l, idx) => this._spawnLaser(l, idx));
 
     this.shake = 0;
     this._syncCamera(0);
+  }
+
+  _spawnMover(spec, id) {
+    const baseX = spec.x * CELL_SIZE;
+    const baseZ = spec.z * CELL_SIZE;
+    const geo = new THREE.BoxGeometry(spec.w, spec.h, spec.d);
+    const mat = this.assets.toonMat({ color: spec.color || 0xffe01b });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(baseX, spec.h / 2, baseZ);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.assets.addCreaseLines(mesh);
+    // 顶部添加漫画高对比装饰条（可踩踏平台带青色/金色边框）
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(spec.w * 0.84, 0.12, spec.d * 0.84),
+      this.assets.toonMat({ color: spec.rideable ? 0x181822 : 0xff2a44 })
+    );
+    cap.position.y = spec.h / 2 + 0.06;
+    mesh.add(cap);
+    mesh.userData = { kind: "wall" };
+    this.levelRoot.add(mesh);
+    this.hitTargets.push(mesh);
+
+    this.movers.push({
+      id,
+      mesh,
+      baseX,
+      baseZ,
+      x: baseX,
+      z: baseZ,
+      dx: 0,
+      dz: 0,
+      axis: spec.axis || "z",
+      range: (spec.range || 2) * CELL_SIZE,
+      speed: spec.speed || 1.2,
+      phase: spec.phase || 0,
+      w: spec.w,
+      h: spec.h,
+      d: spec.d,
+      color: spec.color || 0xffe01b,
+      rideable: !!spec.rideable,
+    });
+  }
+
+  _spawnLaser(spec, id) {
+    const x1 = spec.x1 * CELL_SIZE;
+    const z1 = spec.z1 * CELL_SIZE;
+    const x2 = spec.x2 * CELL_SIZE;
+    const z2 = spec.z2 * CELL_SIZE;
+    const dx = x2 - x1;
+    const dz = z2 - z1;
+    const len = Math.hypot(dx, dz);
+    const midX = (x1 + x2) / 2;
+    const midZ = (z1 + z2) / 2;
+    const yaw = Math.atan2(dx, dz);
+
+    // 两端发射柱
+    const pylonGeo = new THREE.CylinderGeometry(0.28, 0.34, 2.2, 8);
+    const pylonMat = this.assets.toonMat({ color: 0x22222c });
+    [[x1, z1], [x2, z2]].forEach(([px, pz]) => {
+      const pylon = new THREE.Mesh(pylonGeo, pylonMat);
+      pylon.position.set(px, 1.1, pz);
+      this.assets.addOutline(pylon, 1.08);
+      this.levelRoot.add(pylon);
+    });
+
+    // 3 道平行水平激光束（可用 SPACE 跳过或 SHIFT 冲刺无敌帧穿过）
+    const beamMat = new THREE.MeshBasicMaterial({ color: 0xff2ebd, transparent: true, opacity: 0.92 });
+    const beams = [];
+    [0.5, 1.0, 1.45].forEach((by) => {
+      const geo = new THREE.CylinderGeometry(0.085, 0.085, len, 8);
+      geo.rotateX(Math.PI / 2);
+      const beam = new THREE.Mesh(geo, beamMat);
+      beam.position.set(midX, by, midZ);
+      beam.rotation.y = yaw;
+      this.levelRoot.add(beam);
+      beams.push(beam);
+    });
+
+    this.lasers.push({
+      id,
+      x1,
+      z1,
+      x2,
+      z2,
+      len,
+      period: spec.period || 4.2,
+      duty: spec.duty || 0.5,
+      phase: spec.phase || 0,
+      beams,
+      beamMat,
+      active: true,
+    });
   }
 
   _buildComicSkyline(worldW, worldH, lvl) {
@@ -488,6 +594,25 @@ export class ComicFPS3DEngine {
       this.levelRoot.add(g);
       prop.mesh = g;
       prop.ring = ring;
+    } else if (spec.type === "boostpad") {
+      const g = new THREE.Group();
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1, 0.14, 2.1),
+        this.assets.toonMat({ color: 0x00e5ff, emissive: 0x005577 })
+      );
+      this.assets.addOutline(pad, 1.05);
+      const chevron = new THREE.Mesh(
+        new THREE.ConeGeometry(0.55, 1.0, 3),
+        new THREE.MeshBasicMaterial({ color: 0xffe01b })
+      );
+      chevron.rotation.x = -Math.PI / 2;
+      chevron.position.y = 0.15;
+      g.add(pad, chevron);
+      g.position.set(wx, 0.07, wz);
+      this.levelRoot.add(g);
+      prop.mesh = g;
+      prop.ring = chevron;
+      prop.boostCooldown = 0;
     }
 
     this.props.push(prop);
@@ -510,16 +635,43 @@ export class ComicFPS3DEngine {
     return this.map[mz][mx];
   }
 
-  _isBlocked(wx, wz, playerY = 0) {
-    const c = this._cellAt(wx, wz);
-    if (c === 0) return false;
-    if (c === 6 && playerY >= 1.45) return false; // 跳起来可以越过/站在矮木箱上
-    return true;
+  _isStaticBlocked(wx, wz, playerY = 0, radius = 0) {
+    if (radius <= 0) {
+      const c = this._cellAt(wx, wz);
+      return c !== 0 && !(c === 6 && playerY >= 1.45);
+    }
+    const offsets = [
+      [-radius, -radius],
+      [radius, -radius],
+      [-radius, radius],
+      [radius, radius],
+    ];
+    for (const [ox, oz] of offsets) {
+      const c = this._cellAt(wx + ox, wz + oz);
+      if (c !== 0 && !(c === 6 && playerY >= 1.45)) return true;
+    }
+    return false;
+  }
+
+  _isBlocked(wx, wz, playerY = 0, radius = 0) {
+    if (this._isStaticBlocked(wx, wz, playerY, radius)) return true;
+    for (const m of this.movers) {
+      if (Math.abs(wx - m.x) < m.w / 2 + radius && Math.abs(wz - m.z) < m.d / 2 + radius) {
+        if (m.rideable && playerY >= m.h - 0.28) continue;
+        if (playerY < m.h) return true;
+      }
+    }
+    return false;
   }
 
   _groundHeightAt(wx, wz) {
-    const c = this._cellAt(wx, wz);
-    return c === 6 ? 1.65 : 0;
+    let h = this._cellAt(wx, wz) === 6 ? 1.65 : 0;
+    for (const m of this.movers) {
+      if (m.rideable && Math.abs(wx - m.x) < m.w / 2 + 0.35 && Math.abs(wz - m.z) < m.d / 2 + 0.35) {
+        if (m.h > h) h = m.h;
+      }
+    }
+    return h;
   }
 
   _hasLineOfSight(fromPos, toPos) {
@@ -532,6 +684,11 @@ export class ComicFPS3DEngine {
       const c = this._cellAt(p.x, p.z);
       if (c > 0 && c !== 6) return false;
       if (c === 6 && p.y < 1.65) return false;
+      for (const m of this.movers) {
+        if (Math.abs(p.x - m.x) < m.w / 2 && Math.abs(p.z - m.z) < m.d / 2 && p.y < m.h) {
+          return false;
+        }
+      }
     }
     return true;
   }
@@ -605,23 +762,66 @@ export class ComicFPS3DEngine {
     return true;
   }
 
+  addShotRecoil(recoilKick = 1.0) {
+    const adsScale = this.weapons?.isAds ? 0.72 : 1.0;
+    const k = recoilKick * adsScale;
+    this.shake = Math.min(20, this.shake + k * 7.8);
+    this.recoilPitch = Math.min(0.11, this.recoilPitch + k * 0.036);
+    this.recoilRoll = (Math.random() < 0.5 ? -1 : 1) * Math.min(0.055, k * 0.022);
+    this.recoilFovKick = Math.min(4.2, this.recoilFovKick + k * 1.7);
+  }
+
+  _decayCameraRecoil(dt) {
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 38);
+    const decay = Math.exp(-dt * 14);
+    this.recoilPitch *= decay;
+    this.recoilRoll *= decay;
+    this.recoilFovKick *= Math.exp(-dt * 16);
+    if (Math.abs(this.recoilPitch) < 0.0002) this.recoilPitch = 0;
+    if (Math.abs(this.recoilRoll) < 0.0002) this.recoilRoll = 0;
+    if (Math.abs(this.recoilFovKick) < 0.01) this.recoilFovKick = 0;
+  }
+
+  // 动态子弹散布：站立精准，移动 / 跳跃腾空 / 冲刺时适度增加散布惩罚
+  getCurrentSpread() {
+    const w = this.weapons.current;
+    const p = this.player;
+    const isAds = this.weapons.isAds;
+    let spread = isAds ? w.adsSpread : w.spread;
+
+    const moveRatio = Math.min(1, Math.max(0, p.moveSpeedRatio || 0));
+    if (moveRatio > 0.05) {
+      spread += (isAds ? 0.007 : 0.015) * moveRatio;
+    }
+    if (!p.onGround) {
+      spread += isAds ? 0.018 : 0.032;
+    }
+    if (p.dashTimer > 0) {
+      spread += 0.042;
+    }
+    return spread;
+  }
+
   fireWeapon(targets = this.hitTargets) {
     if (!this.weapons.canFire()) return;
     const w = this.weapons.consumeShot();
     this.callbacks.onShot?.(this.weapons.currentIdx);
     this.player.fireTimer = 0.22;
-    this.shake = Math.min(14, this.shake + w.recoilKick * 4.2);
+    this.addShotRecoil(w.recoilKick);
 
     const muzzlePos = this.renderer ? this.weapons.getMuzzleWorldPosition() : this.camera.position;
-    const spread = this.weapons.isAds ? w.adsSpread : w.spread;
+    const spread = this.getCurrentSpread();
 
     let hitAny = false;
     let critAny = false;
     this.camera.updateMatrixWorld();
 
     for (let p = 0; p < w.pellets; p++) {
-      const ndcX = (Math.random() - 0.5) * spread * 2;
-      const ndcY = (Math.random() - 0.5) * spread * 2;
+      // 圆形均匀散布采样，比方形散布更自然
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.sqrt(Math.random()) * spread;
+      const ndcX = Math.cos(ang) * rad;
+      const ndcY = Math.sin(ang) * rad;
       this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
       const hit = this.raycaster.intersectObjects(targets, false).find(({ distance, object }) => {
         const { enemy, prop, player } = object.userData;
@@ -644,10 +844,19 @@ export class ComicFPS3DEngine {
           hitAny = true;
           this._explodeBarrel(ud.prop);
         } else if (ud.kind === "player") {
-          const dmg = ud.isHead ? Math.round(w.damage * w.headshotMult) : w.damage;
+          const isHead = !!ud.isHead;
+          const dmg = isHead ? Math.round(w.damage * w.headshotMult) : w.damage;
           if (this.callbacks.onPlayerHit?.(ud.player, dmg)) {
             hitAny = true;
-            critAny ||= ud.isHead;
+            critAny ||= isHead;
+            this.spawnPopup(
+              hit.point.clone().add(new THREE.Vector3(0, 0.25, 0)),
+              isHead ? `-${dmg} ★` : `-${dmg}`,
+              isHead ? "#ffe01b" : "#ffffff",
+              isHead ? 1.18 : 0.92,
+              isHead ? "headshot" : "dmg"
+            );
+            this._spawnParticles(hit.point, isHead ? 0xffe01b : 0xff2a44, isHead ? 7 : 4);
           }
         } else {
           // 击中墙壁的漫画火花
@@ -714,9 +923,9 @@ export class ComicFPS3DEngine {
     this.shockwaves.push({ mesh: ring, age: 0, life: 0.36 });
   }
 
-  spawnPopup(pos, text, color = "#ffe01b", scale = 1.0) {
+  spawnPopup(pos, text, color = "#ffe01b", scale = 1.0, kind = "bubble") {
     if (!this.renderer) {
-      this.callbacks.onPopup?.(pos, text, color, scale);
+      this.callbacks.onPopup?.(pos, text, color, scale, kind);
       return;
     }
     this.popups.push({
@@ -724,8 +933,9 @@ export class ComicFPS3DEngine {
       text,
       color,
       scale,
+      kind,
       age: 0,
-      life: 0.78,
+      life: kind === "dmg" ? 0.62 : kind === "headshot" ? 0.72 : 0.78,
     });
   }
 
@@ -739,14 +949,15 @@ export class ComicFPS3DEngine {
       ? hitPoint.clone()
       : new THREE.Vector3(enemy.root.position.x, 1.8 * enemy.scale, enemy.root.position.z);
 
-    const words = isHeadshot ? ["HEADSHOT!", "CRIT!", "CRACK!"] : [soundWord || "POW!", "BAM!", "WHACK!"];
+    // 显示扣血点数（爆头额外带金色星标与微光环特效）
     this.spawnPopup(
-      fxPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.5, (Math.random() - 0.5) * 0.5)),
-      words[Math.floor(Math.random() * words.length)],
-      isHeadshot ? "#ffe01b" : "#ff2a44",
-      isHeadshot ? 1.28 : 0.96
+      fxPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.35, (Math.random() - 0.5) * 0.3)),
+      isHeadshot ? `-${dmg} ★` : `-${dmg}`,
+      isHeadshot ? "#ffe01b" : "#ffffff",
+      isHeadshot ? 1.2 : 0.94,
+      isHeadshot ? "headshot" : "dmg"
     );
-    this._spawnParticles(fxPos, isHeadshot ? 0xffe01b : 0xff2a44, isHeadshot ? 10 : 6);
+    this._spawnParticles(fxPos, isHeadshot ? 0xffe01b : 0xff2a44, isHeadshot ? 9 : 5);
 
     // 受伤闪白
     enemy.meshes.forEach((m) => m.material.color.setHex(0xffffff));
@@ -856,6 +1067,8 @@ export class ComicFPS3DEngine {
       return;
     }
 
+    this.levelTime += dt;
+    this._updateDynamics(dt, [this.player], true);
     this._updateCombo(dt);
     this._updatePlayer(dt);
     if (this.mouseDown && this.weapons.current.auto) this.fireWeapon();
@@ -863,6 +1076,111 @@ export class ComicFPS3DEngine {
     this._updateEnemies(dt);
     this._updateProjectiles(dt);
     this._updateFX(dt);
+  }
+
+  _updateDynamics(dt, players = [this.player], applyHazard = true) {
+    // 1. 更新移动方块 / 可踩踏浮空平台
+    for (const m of this.movers) {
+      const prevX = m.x;
+      const prevZ = m.z;
+      const offset = Math.sin(this.levelTime * m.speed + m.phase) * m.range;
+      m.x = m.axis === "x" ? m.baseX + offset : m.baseX;
+      m.z = m.axis === "z" ? m.baseZ + offset : m.baseZ;
+      m.dx = m.x - prevX;
+      m.dz = m.z - prevZ;
+      m.mesh.position.set(m.x, m.h / 2, m.z);
+
+      if (!applyHazard) continue;
+      const pRadius = 0.68;
+      // 玩家站在可踩踏移动平台上时随平台一同移动；否则被移动方块推开，彻底避免穿模
+      for (const pl of players) {
+        if (pl.hp <= 0) continue;
+        const onTop = m.rideable && pl.pos.y >= m.h - 0.32 && Math.abs(pl.pos.x - prevX) < m.w / 2 + 0.45 && Math.abs(pl.pos.z - prevZ) < m.d / 2 + 0.45;
+        if (onTop) {
+          if (!this._isStaticBlocked(pl.pos.x + m.dx, pl.pos.z, pl.pos.y, pRadius)) pl.pos.x += m.dx;
+          if (!this._isStaticBlocked(pl.pos.x, pl.pos.z + m.dz, pl.pos.y, pRadius)) pl.pos.z += m.dz;
+          continue;
+        }
+        const halfW = m.w / 2 + pRadius;
+        const halfD = m.d / 2 + pRadius;
+        const diffX = pl.pos.x - m.x;
+        const diffZ = pl.pos.z - m.z;
+        if (pl.pos.y < m.h - 0.12 && Math.abs(diffX) < halfW && Math.abs(diffZ) < halfD) {
+          if (m.rideable && pl.pos.y >= m.h - 0.55) {
+            pl.pos.y = m.h;
+            pl.velY = Math.max(0, pl.velY);
+            pl.onGround = true;
+          } else {
+            const penX = halfW - Math.abs(diffX);
+            const penZ = halfD - Math.abs(diffZ);
+            if (penX < penZ) {
+              const pushX = pl.pos.x + (diffX >= 0 ? penX : -penX);
+              if (!this._isStaticBlocked(pushX, pl.pos.z, pl.pos.y, pRadius)) pl.pos.x = pushX;
+            } else {
+              const pushZ = pl.pos.z + (diffZ >= 0 ? penZ : -penZ);
+              if (!this._isStaticBlocked(pl.pos.x, pushZ, pl.pos.y, pRadius)) pl.pos.z = pushZ;
+            }
+          }
+        }
+      }
+
+      // 同样推开接触到移动方块的存活敌人，防止敌人穿模进入移动物体
+      const eRadius = 0.65;
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const halfW = m.w / 2 + eRadius;
+        const halfD = m.d / 2 + eRadius;
+        const diffX = e.root.position.x - m.x;
+        const diffZ = e.root.position.z - m.z;
+        if (Math.abs(diffX) < halfW && Math.abs(diffZ) < halfD) {
+          const penX = halfW - Math.abs(diffX);
+          const penZ = halfD - Math.abs(diffZ);
+          if (penX < penZ) {
+            const pushX = e.root.position.x + (diffX >= 0 ? penX : -penX);
+            if (!this._isStaticBlocked(pushX, e.root.position.z, 0, eRadius)) e.root.position.x = pushX;
+          } else {
+            const pushZ = e.root.position.z + (diffZ >= 0 ? penZ : -penZ);
+            if (!this._isStaticBlocked(e.root.position.x, pushZ, 0, eRadius)) e.root.position.z = pushZ;
+          }
+        }
+      }
+    }
+
+    // 2. 更新周期性安保激光封锁线
+    for (const l of this.lasers) {
+      const phasePos = ((this.levelTime + l.phase) % l.period) / l.period;
+      const isOn = phasePos < l.duty;
+      const isWarn = !isOn && phasePos > 0.86;
+      l.active = isOn;
+
+      for (const beam of l.beams) {
+        beam.visible = isOn || isWarn;
+        beam.scale.set(isOn ? 1 : 0.35, 1, isOn ? 1 : 0.35);
+      }
+      l.beamMat.color.setHex(isOn ? 0xff2ebd : 0xffe01b);
+      l.beamMat.opacity = isOn ? 0.92 : (Math.floor(this.levelTime * 16) % 2 === 0 ? 0.6 : 0.15);
+
+      if (!applyHazard || !isOn) continue;
+      for (const pl of players) {
+        if (pl.hp <= 0 || pl.pos.y > 1.55) continue; // 跳跃可越过激光
+        if (pl.laserCooldown > 0) {
+          pl.laserCooldown -= dt;
+          continue;
+        }
+        // 计算玩家到激光线段的距离
+        const vx = l.x2 - l.x1;
+        const vz = l.z2 - l.z1;
+        const t = Math.max(0, Math.min(1, ((pl.pos.x - l.x1) * vx + (pl.pos.z - l.z1) * vz) / (vx * vx + vz * vz || 1)));
+        const cx = l.x1 + t * vx;
+        const cz = l.z1 + t * vz;
+        if (Math.hypot(pl.pos.x - cx, pl.pos.z - cz) < 0.72) {
+          if (this._damagePlayer(14, pl)) {
+            pl.laserCooldown = 0.65;
+            this.spawnPopup(new THREE.Vector3(pl.pos.x, 1.8, pl.pos.z), "ZAP!", "#ff2ebd", 1.15);
+          }
+        }
+      }
+    }
   }
 
   _updateCombo(dt) {
@@ -877,7 +1195,7 @@ export class ComicFPS3DEngine {
     if (p.hurtTimer > 0) p.hurtTimer = Math.max(0, p.hurtTimer - dt);
     if (p.fireTimer > 0) p.fireTimer = Math.max(0, p.fireTimer - dt);
     if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - dt);
-    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 42);
+    this._decayCameraRecoil(dt);
     if (this.speedLineAlpha > 0) this.speedLineAlpha = Math.max(0, this.speedLineAlpha - dt * 3.0);
 
     // 键盘视角辅助旋转
@@ -903,13 +1221,15 @@ export class ComicFPS3DEngine {
     }
 
     const isMoving = move.lengthSq() > 0.1;
-    const radius = 0.65;
+    const targetMoveRatio = isMoving ? 1 : 0;
+    p.moveSpeedRatio += (targetMoveRatio - p.moveSpeedRatio) * Math.min(1, dt * 14);
+    const radius = 0.68;
     const nextX = p.pos.x + move.x * dt;
-    if (!this._isBlocked(nextX + Math.sign(move.x) * radius, p.pos.z, p.pos.y)) {
+    if (!this._isBlocked(nextX, p.pos.z, p.pos.y, radius)) {
       p.pos.x = nextX;
     }
     const nextZ = p.pos.z + move.z * dt;
-    if (!this._isBlocked(p.pos.x, nextZ + Math.sign(move.z) * radius, p.pos.y)) {
+    if (!this._isBlocked(p.pos.x, nextZ, p.pos.y, radius)) {
       p.pos.z = nextZ;
     }
 
@@ -929,12 +1249,13 @@ export class ComicFPS3DEngine {
       p.bobPhase += dt * 11.5;
     }
 
-    // 动态平滑 FOV（ADS 机瞄缩放 / Dash 速度拉伸）
-    const targetFov = p.dashTimer > 0
+    // 动态平滑 FOV（ADS 机瞄缩放 / Dash 速度拉伸 / 开火后坐力脉冲）
+    const baseTargetFov = p.dashTimer > 0
       ? 85
       : THREE.MathUtils.lerp(this.baseFov, this.weapons.current.adsFov, this.weapons.adsAmount);
+    const targetFov = baseTargetFov + this.recoilFovKick;
     if (this.renderer && Math.abs(this.camera.fov - targetFov) > 0.05) {
-      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 18);
       this.camera.updateProjectionMatrix();
     }
 
@@ -947,11 +1268,20 @@ export class ComicFPS3DEngine {
   _syncCamera() {
     const p = this.player;
     const bob = this.renderer && p.onGround ? Math.sin(p.bobPhase) * 0.055 : 0;
-    const sx = this.renderer && this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
-    const sy = this.renderer && this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.015 : 0;
+    const activeShake = this.renderer && this.shake > 0 ? this.shake : 0;
+    const sx = activeShake ? (Math.random() - 0.5) * activeShake * 0.018 : 0;
+    const sy = activeShake ? (Math.random() - 0.5) * activeShake * 0.018 : 0;
+    const rotShakeX = activeShake ? (Math.random() - 0.5) * activeShake * 0.0032 : 0;
+    const rotShakeY = activeShake ? (Math.random() - 0.5) * activeShake * 0.0028 : 0;
+    const rotShakeZ = activeShake ? (Math.random() - 0.5) * activeShake * 0.0038 : 0;
 
     this.camera.position.set(p.pos.x + sx, p.pos.y + this.eyeHeight + bob + sy, p.pos.z);
-    this.camera.rotation.set(p.pitch, p.yaw, 0, "YXZ");
+    this.camera.rotation.set(
+      p.pitch + (this.renderer ? this.recoilPitch + rotShakeX : 0),
+      p.yaw + (this.renderer ? rotShakeY : 0),
+      this.renderer ? this.recoilRoll + rotShakeZ : 0,
+      "YXZ"
+    );
   }
 
   _updateProps(dt, applyEffects = true) {
@@ -991,6 +1321,20 @@ export class ComicFPS3DEngine {
           this.audio.playJump();
           this.callbacks.onBounce?.(p);
           this.spawnPopup(new THREE.Vector3(pr.x, 1.6, pr.z), "BOING!", "#00ffaa", 1.25);
+        }
+      } else if (pr.type === "boostpad") {
+        if (pr.ring) pr.ring.rotation.y += dt * 3.2;
+        if (pr.boostCooldown > 0) pr.boostCooldown -= dt;
+        if (!applyEffects || pr.boostCooldown > 0) continue;
+        const dist = Math.hypot(pr.x - p.pos.x, pr.z - p.pos.z);
+        if (dist < 1.45 && p.pos.y < 0.9) {
+          pr.boostCooldown = 0.75;
+          p.dashDir.set(-Math.sin(p.yaw), 0, -Math.cos(p.yaw)).normalize();
+          p.dashTimer = 0.28;
+          this.speedLineAlpha = 1.0;
+          this.audio.playDash();
+          this.callbacks.onBounce?.(p);
+          this.spawnPopup(new THREE.Vector3(pr.x, 1.6, pr.z), "ZOOM!", "#00e5ff", 1.25);
         }
       }
     }
@@ -1076,8 +1420,8 @@ export class ComicFPS3DEngine {
 
       const nextX = e.root.position.x + vx * dt;
       const nextZ = e.root.position.z + vz * dt;
-      if (!this._isBlocked(nextX + Math.sign(vx) * 0.65, e.root.position.z, 0)) e.root.position.x = nextX;
-      if (!this._isBlocked(e.root.position.x, nextZ + Math.sign(vz) * 0.65, 0)) e.root.position.z = nextZ;
+      if (!this._isBlocked(nextX, e.root.position.z, 0, 0.65)) e.root.position.x = nextX;
+      if (!this._isBlocked(e.root.position.x, nextZ, 0, 0.65)) e.root.position.z = nextZ;
 
       // 奔跑摆腿动画
       e.animPhase += dt * 9;
@@ -1256,18 +1600,58 @@ export class ComicFPS3DEngine {
       ctx.fillRect(sp.x - bw / 2, sp.y, bw * Math.max(0, e.hp / e.maxHp), bh);
     }
 
-    // 2. 3D 投影漫画拟声词气泡
+    // 2. 3D 投影漫画拟声词气泡 & 扣血点数 & 爆头微特效
     for (const pop of this.popups) {
       const sp = this._projectToScreen(pop.pos);
       if (!sp) continue;
       const progress = pop.age / pop.life;
-      const alpha = progress > 0.72 ? 1 - (progress - 0.72) / 0.28 : 1;
-      const bounce = progress < 0.18 ? 0.55 + (progress / 0.18) * 0.6 : 1.05;
-      const fontSize = Math.max(18, Math.min(48, (320 / Math.max(5, sp.dist)) * pop.scale * bounce));
+      const alpha = progress > 0.68 ? 1 - (progress - 0.68) / 0.32 : 1;
+      const bounce = progress < 0.16 ? 0.65 + (progress / 0.16) * 0.5 : 1.0;
 
       ctx.save();
       ctx.globalAlpha = Math.max(0, alpha);
       ctx.translate(sp.x, sp.y);
+
+      if (pop.kind === "dmg" || pop.kind === "headshot") {
+        const fontSize = Math.max(20, Math.min(44, (290 / Math.max(4.5, sp.dist)) * pop.scale * bounce));
+
+        // 爆头额外克制特效：短暂扩张的金色光圈 + 4角小星芒（前 0.24 秒）
+        if (pop.kind === "headshot" && pop.age < 0.26) {
+          const hp = pop.age / 0.26;
+          const r = fontSize * (0.45 + hp * 0.95);
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, (1 - hp) * 0.9);
+          ctx.strokeStyle = "#ffe01b";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 4; i++) {
+            const ang = (i * Math.PI) / 2 + Math.PI / 4;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(ang) * (r * 0.55), Math.sin(ang) * (r * 0.55));
+            ctx.lineTo(Math.cos(ang) * (r * 1.25), Math.sin(ang) * (r * 1.25));
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        ctx.font = `900 ${Math.round(fontSize)}px Impact, "Arial Black", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = pop.kind === "headshot" ? 6 : 5;
+        ctx.strokeStyle = "#101016";
+        ctx.strokeText(pop.text, 0, 0);
+        ctx.fillStyle = pop.kind === "headshot" ? "#ffe01b" : "#ffffff";
+        ctx.fillText(pop.text, 0, 0);
+        ctx.restore();
+        continue;
+      }
+
+      const fontSize = Math.max(18, Math.min(48, (320 / Math.max(5, sp.dist)) * pop.scale * bounce));
       ctx.rotate(-0.11);
 
       const spikes = 10;
@@ -1345,11 +1729,30 @@ export class ComicFPS3DEngine {
       }
     }
 
+    // 移动方块与激活激光线
+    for (const m of this.movers) {
+      miniCtx.fillStyle = m.rideable ? "#00e5ff" : "#ff7a00";
+      const mw = (m.w / CELL_SIZE) * cell;
+      const md = (m.d / CELL_SIZE) * cell;
+      miniCtx.fillRect(ox + (m.x / CELL_SIZE) * cell - mw / 2, oy + (m.z / CELL_SIZE) * cell - md / 2, mw, md);
+    }
+
+    for (const l of this.lasers) {
+      if (!l.active) continue;
+      miniCtx.strokeStyle = "#ff2ebd";
+      miniCtx.lineWidth = 2;
+      miniCtx.beginPath();
+      miniCtx.moveTo(ox + (l.x1 / CELL_SIZE) * cell, oy + (l.z1 / CELL_SIZE) * cell);
+      miniCtx.lineTo(ox + (l.x2 / CELL_SIZE) * cell, oy + (l.z2 / CELL_SIZE) * cell);
+      miniCtx.stroke();
+    }
+
     for (const pr of this.props) {
       if (!pr.active) continue;
       miniCtx.fillStyle =
         pr.type === "barrel" ? "#ff7a00" :
         pr.type === "medkit" ? "#38e54d" :
+        pr.type === "boostpad" ? "#00e5ff" :
         pr.type === "jumppad" ? "#00ffaa" : "#ffe01b";
       miniCtx.fillRect(ox + (pr.x / CELL_SIZE) * cell - 2, oy + (pr.z / CELL_SIZE) * cell - 2, 4, 4);
     }

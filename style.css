@@ -814,3 +814,541 @@ html, body {
     display: none;
   }
 }
+
+
+/* ================= 醒目受击反馈 & 命中强化 ================= */
+.damage-flash {
+  background:
+    radial-gradient(circle at center, rgba(255, 24, 52, 0.16) 28%, rgba(255, 16, 44, 0.92) 100%);
+  box-shadow: inset 0 0 0 12px rgba(255, 20, 50, 0.95), inset 0 0 90px rgba(180, 0, 24, 0.85);
+  transition: opacity 0.24s ease-out;
+}
+
+.damage-flash.active {
+  opacity: 1;
+}
+
+.damage-stamp {
+  position: absolute;
+  top: 16%;
+  right: 9%;
+  font-family: var(--font-display);
+  font-size: 46px;
+  letter-spacing: 2px;
+  color: var(--yellow);
+  -webkit-text-stroke: 3px var(--ink);
+  text-shadow: 5px 5px 0 var(--ink);
+  transform: rotate(11deg) scale(0.7);
+  opacity: 0;
+  transition: transform 0.12s ease-out, opacity 0.18s ease-out;
+}
+
+.damage-flash.active .damage-stamp {
+  transform: rotate(8deg) scale(1.12);
+  opacity: 1;
+}
+
+/* 强化命中反馈（光环 + 醒目叉号 + HIT/CRIT 标签） */
+.hit-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 4px solid var(--red);
+  box-shadow: 0 0 0 2px var(--ink);
+  transform: translate(-50%, -50%) scale(0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+}
+
+.hit-ring.active {
+  transform: translate(-50%, -50%) scale(1.35);
+  opacity: 0.95;
+}
+
+.hit-ring.crit {
+  border-color: var(--yellow);
+  border-width: 5px;
+  transform: translate(-50%, -50%) scale(1.65);
+}
+
+.hitmarker::before,
+.hitmarker::after {
+  width: 34px;
+  height: 5px;
+  border: 1.5px solid var(--ink);
+  box-shadow: 0 0 0 1px #fff;
+}
+
+.hitmarker.active {
+  opacity: 1;
+  animation: hitPop 0.18s ease-out;
+}
+
+.hitmarker.crit::before,
+.hitmarker.crit::after {
+  width: 46px;
+  height: 6px;
+  background: var(--yellow);
+}
+
+@keyframes hitPop {
+  0% { transform: scale(1.55); }
+  100% { transform: scale(1); }
+}
+
+.hit-label {
+  position: absolute;
+  left: 34px;
+  top: -16px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--red);
+  border: 2.5px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  padding: 1px 6px;
+  transform: rotate(-8deg) scale(0.7);
+  opacity: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: transform 0.12s ease-out, opacity 0.16s ease-out;
+}
+
+.hit-label.active {
+  opacity: 1;
+  transform: rotate(-6deg) scale(1.08);
+}
+
+.hit-label.crit {
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 21px;
+}
+
+/* ================= 准星下方换弹夹倒计时与进度条 ================= */
+.reload-hud {
+  position: absolute;
+  top: calc(50% + 36px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 170px;
+  background: rgba(15, 15, 20, 0.9);
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  padding: 5px 8px;
+  text-align: center;
+  z-index: 11;
+}
+
+.reload-hud-text {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: var(--yellow);
+  margin-bottom: 4px;
+}
+
+.reload-track {
+  height: 10px;
+  border-width: 2px;
+  background: #232028;
+}
+
+.reload-fill {
+  width: 0%;
+  background: linear-gradient(90deg, var(--yellow), var(--orange));
+  transition: none;
+}
+
+/* ================= PvP / 联机全屏死亡与复活等待遮罩 ================= */
+.respawn-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(rgba(0, 0, 0, 0.25) 2px, transparent 2px),
+    radial-gradient(circle at center, rgba(160, 8, 28, 0.42) 0%, rgba(16, 4, 14, 0.86) 100%);
+  background-size: 12px 12px, 100% 100%;
+  animation: respawnFadeIn 0.22s ease-out;
+}
+
+@keyframes respawnFadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.respawn-banner {
+  width: min(500px, 90vw);
+  background: var(--paper);
+  border: 6px solid var(--ink);
+  box-shadow: 10px 10px 0 var(--ink);
+  padding: 22px 26px;
+  text-align: center;
+  transform: rotate(-1.2deg);
+}
+
+.respawn-tag {
+  display: inline-block;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 2px;
+  padding: 3px 14px;
+  border: 3px solid var(--ink);
+  margin-bottom: 8px;
+}
+
+.respawn-title {
+  font-family: var(--font-display);
+  font-size: clamp(36px, 5vw, 52px);
+  line-height: 1;
+  color: var(--yellow);
+  -webkit-text-stroke: 2.5px var(--ink);
+  text-shadow: 4px 4px 0 var(--ink);
+  margin-bottom: 10px;
+}
+
+.respawn-reason {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+
+.respawn-count-wrap {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.respawn-label {
+  font-family: var(--font-display);
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.respawn-timer {
+  font-family: var(--font-display);
+  font-size: 42px;
+  line-height: 1;
+  color: var(--red);
+  -webkit-text-stroke: 1.5px var(--ink);
+  text-shadow: 3px 3px 0 var(--ink);
+}
+
+.respawn-track {
+  height: 18px;
+  background: #232028;
+}
+
+.respawn-fill {
+  width: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--yellow));
+  transition: none;
+}
+
+/* ================= 局末全屏结果展示延迟提示 ================= */
+.result-wait-hint {
+  display: inline-block;
+  margin: 4px 0 8px;
+  padding: 6px 16px;
+  background: var(--ink);
+  color: var(--yellow);
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 1px;
+  border: 3px solid var(--yellow);
+}
+
+.actions-reveal {
+  animation: actionsPopIn 0.25s ease-out;
+}
+
+@keyframes actionsPopIn {
+  0% { opacity: 0; transform: translateY(10px) scale(0.96); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+
+/* ================= 胜利 / 落败瞬间漫画冲击动画 ================= */
+.overlay-screen.result-victory {
+  background:
+    radial-gradient(rgba(255, 224, 27, 0.28) 2px, transparent 2px),
+    radial-gradient(circle at center, rgba(255, 224, 27, 0.32) 0%, rgba(12, 24, 48, 0.9) 72%);
+  background-size: 16px 16px, 100% 100%;
+  animation: victoryFlash 0.45s ease-out;
+}
+
+.overlay-screen.result-victory .comic-modal {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 5px var(--yellow), 12px 12px 0 var(--ink);
+  animation: victorySlam 0.48s cubic-bezier(0.18, 1.35, 0.35, 1);
+}
+
+.overlay-screen.result-victory .modal-title {
+  color: var(--yellow);
+  animation: titlePop 0.55s ease-out;
+}
+
+.overlay-screen.result-defeat {
+  background:
+    radial-gradient(rgba(255, 42, 68, 0.25) 2px, transparent 2px),
+    radial-gradient(circle at center, rgba(180, 12, 34, 0.42) 0%, rgba(16, 6, 14, 0.92) 72%);
+  background-size: 14px 14px, 100% 100%;
+  animation: defeatFlash 0.42s ease-out;
+}
+
+.overlay-screen.result-defeat .comic-modal {
+  box-shadow: 0 0 0 5px var(--red), 12px 12px 0 var(--ink);
+  animation: defeatSlam 0.48s ease-out;
+}
+
+.overlay-screen.result-defeat .modal-title {
+  color: var(--red);
+}
+
+@keyframes victoryFlash {
+  0% { filter: brightness(2.1); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes victorySlam {
+  0% { opacity: 0; transform: scale(1.45) rotate(-5deg); }
+  60% { opacity: 1; transform: scale(0.96) rotate(1.2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+@keyframes titlePop {
+  0% { transform: scale(1.45); }
+  100% { transform: scale(1); }
+}
+
+@keyframes defeatFlash {
+  0% { filter: contrast(1.8) saturate(1.8); }
+  100% { filter: none; }
+}
+
+@keyframes defeatSlam {
+  0% { opacity: 0; transform: scale(1.35) translateY(-28px); }
+  35% { opacity: 1; transform: scale(0.98) translate(-10px, 4px) rotate(-2deg); }
+  55% { transform: translate(8px, -3px) rotate(1.5deg); }
+  75% { transform: translate(-4px, 2px) rotate(-0.8deg); }
+  100% { transform: scale(1) translate(0, 0) rotate(0deg); }
+}
+
+
+/* ================= 动态散布准星扩张反馈 ================= */
+.crosshair {
+  --spread: 0px;
+}
+
+.ch-top {
+  transform: translateY(calc(-1 * var(--spread)));
+  transition: transform 0.07s ease-out;
+}
+
+.ch-bottom {
+  transform: translateY(var(--spread));
+  transition: transform 0.07s ease-out;
+}
+
+.ch-left {
+  transform: translateX(calc(-1 * var(--spread)));
+  transition: transform 0.07s ease-out;
+}
+
+.ch-right {
+  transform: translateX(var(--spread));
+  transition: transform 0.07s ease-out;
+}
+
+
+/* ================= 3A 风格全屏实景开始界面 ================= */
+.aaa-title-screen {
+  background:
+    linear-gradient(125deg, rgba(12, 10, 22, 0.72) 0%, rgba(12, 10, 22, 0.08) 42%, rgba(12, 10, 22, 0.12) 60%, rgba(12, 10, 22, 0.84) 100%);
+  display: block;
+  padding: 0;
+}
+
+.aaa-brand {
+  position: absolute;
+  top: clamp(28px, 5vh, 52px);
+  left: clamp(28px, 4.5vw, 60px);
+  max-width: min(640px, 82vw);
+  pointer-events: none;
+}
+
+.aaa-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.aaa-pub {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 2px;
+  padding: 4px 12px;
+  border: 3px solid var(--yellow);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.aaa-issue-pill {
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  padding: 4px 11px;
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  transform: skewX(-8deg);
+}
+
+.aaa-logo {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(56px, 8.2vw, 104px);
+  line-height: 0.9;
+  letter-spacing: 3px;
+  color: #fff;
+  -webkit-text-stroke: 4px var(--ink);
+  text-shadow: 8px 8px 0 var(--ink), 13px 13px 0 rgba(255, 42, 68, 0.85);
+  transform: skewX(-5deg) rotate(-1.5deg);
+}
+
+.aaa-tagline {
+  display: inline-block;
+  margin-top: 14px;
+  background: var(--yellow);
+  color: var(--ink);
+  font-weight: 900;
+  font-size: clamp(14px, 1.5vw, 17px);
+  letter-spacing: 1px;
+  padding: 5px 16px;
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  transform: skewX(-6deg);
+}
+
+/* 左下角极简提示条 */
+.aaa-footer {
+  position: absolute;
+  bottom: clamp(22px, 3.5vh, 38px);
+  left: clamp(28px, 4.5vw, 60px);
+  pointer-events: none;
+}
+
+.aaa-hint {
+  display: inline-block;
+  background: rgba(15, 15, 20, 0.78);
+  color: var(--paper);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding: 6px 14px;
+  border-left: 4px solid var(--cyan);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.18);
+}
+
+/* 右下角 3A 纵向菜单选项区 */
+.aaa-menu {
+  position: absolute;
+  right: clamp(28px, 4.5vw, 60px);
+  bottom: clamp(26px, 4.5vh, 52px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 11px;
+  width: min(350px, 84vw);
+}
+
+.aaa-menu-btn {
+  width: 100%;
+  text-align: right;
+  font-family: var(--font-display);
+  font-size: 21px;
+  letter-spacing: 1.5px;
+  padding: 13px 22px 13px 28px;
+  color: #fff;
+  background: rgba(15, 15, 22, 0.88);
+  border: 4px solid var(--ink);
+  border-right: 10px solid var(--cyan);
+  box-shadow: 6px 6px 0 var(--ink);
+  transform: skewX(-7deg);
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.aaa-menu-btn:hover {
+  transform: skewX(-7deg) translateX(-12px);
+  background: var(--cyan);
+  color: var(--ink);
+  border-right-color: var(--ink);
+  box-shadow: 10px 8px 0 var(--ink);
+}
+
+.aaa-menu-btn:active {
+  transform: skewX(-7deg) translateX(-4px) translateY(2px);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.aaa-menu-btn.primary {
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 24px;
+  border-right-color: var(--red);
+}
+
+.aaa-menu-btn.primary:hover {
+  background: var(--red);
+  color: #fff;
+  border-right-color: var(--yellow);
+}
+
+.aaa-menu-btn.subtle {
+  width: 72%;
+  font-size: 16px;
+  padding: 9px 18px;
+  border-right-color: var(--yellow);
+  background: rgba(15, 15, 22, 0.76);
+}
+
+.guide-modal {
+  width: min(760px, 94vw);
+}
+
+.guide-panels {
+  text-align: left;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .aaa-footer {
+    display: none;
+  }
+  .aaa-menu {
+    right: 20px;
+    bottom: 22px;
+    width: calc(100vw - 40px);
+  }
+  .aaa-menu-btn.subtle {
+    width: 100%;
+  }
+}

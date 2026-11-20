@@ -13,8 +13,8 @@ export class ComicAudio {
       this.ctx = new AudioCtx();
       this._createNoiseBuffer();
     }
-    if (this.ctx && this.ctx.state === "suspended") {
-      this.ctx.resume();
+    if (this.ctx && this.ctx.state !== "running") {
+      this.ctx.resume().catch(() => {});
     }
   }
 

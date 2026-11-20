@@ -34,7 +34,8 @@ export class LanMatch {
         this.events.push(this.shot);
       },
       onTracer: (end) => this.shot.ends.push(end.toArray()),
-      onPopup: (at, text, color, scale) => this.events.push({ type: "popup", at: at.toArray(), text, color, scale }),
+      onPopup: (at, text, color, scale, kind = "bubble") =>
+        this.events.push({ type: "popup", at: at.toArray(), text, color, scale, kind }),
       onExplosion: (at) => this.events.push({ type: "explosion", at: at.toArray() }),
       onHit: (crit) => this.markHit(crit),
       onPickup: (player) => this.events.push({ type: "pickup", id: player.id }),
@@ -71,15 +72,23 @@ export class LanMatch {
 
   spawn(player, respawn, keepStats = false) {
     const previousHp = player.hp || 0;
+    const previousWeapon = player.weapons ? player.weapons.currentIdx : 0;
     Object.assign(player, createPlayer());
     player.life = (player.life || 0) + 1;
     player.input = NO_INPUT;
     player.lastInput = 0;
     player.actions = new Set();
     player.respawn = 0;
+    player.respawnTotal = 0;
+    player.lastKiller = null;
     player.protection = respawn ? 1.2 : 0;
     if (!keepStats || !previousHp) player.weapons = new WeaponSystem3D(null, assets, silent);
     if (keepStats && previousHp) player.hp = Math.min(player.maxHp, previousHp + 35);
+    if (respawn || keepStats) {
+      player.weapons.select(previousWeapon);
+      player.weapons.switchAnim = 0;
+      player.weapons.cooldown = 0;
+    }
     player.weapons.isAds = false;
 
     const level = COMIC_LEVELS[this.level];
@@ -157,11 +166,14 @@ export class LanMatch {
 
   onDeath(player) {
     player.deaths += 1;
-    player.respawn = this.mode === "pvp" ? 3 : 6;
+    player.respawnTotal = this.mode === "pvp" ? 3 : 6;
+    player.respawn = player.respawnTotal;
     player.input = NO_INPUT;
     player.actions.clear();
     this.syncAvatar(player);
     const killer = this.actor;
+    player.lastKiller = (this.mode === "pvp" && killer && killer !== player) ? killer.id : null;
+    this.events.push({ type: "death", id: player.id, killer: player.lastKiller });
     if (this.mode === "pvp" && killer && killer !== player) {
       killer.kills += 1;
       if (killer.kills >= KILL_LIMIT) {
@@ -184,7 +196,10 @@ export class LanMatch {
         const target = rival.pos.clone().add(new THREE.Vector3(0, 1.2, 0));
         const offset = target.clone().sub(origin);
         if (offset.lengthSq() < 3.6 ** 2 && offset.setY(0).normalize().dot(forward) > 0.45
-          && engine._hasLineOfSight(origin, target) && engine._damagePlayer(65, rival)) this.markHit(true);
+          && engine._hasLineOfSight(origin, target) && engine._damagePlayer(65, rival)) {
+          this.markHit(true);
+          engine.spawnPopup(target.clone().add(new THREE.Vector3(0, 0.35, 0)), "-65 ★", "#ffe01b", 1.15, "headshot");
+        }
       }
     }
     if (this.phase === "playing" && player.hp > 0 && (player.actions.has("fire")
@@ -201,6 +216,8 @@ export class LanMatch {
   update(dt, now) {
     if (this.phase !== "playing") return;
     const engine = this.engine;
+    engine.levelTime += dt;
+    engine._updateDynamics(dt, this.players, true);
     engine._updateCombo(dt);
     engine.damageablePlayers = this.players;
     for (const player of this.players) {
@@ -237,6 +254,63 @@ export class LanMatch {
       engine._updateProjectiles(dt, this.players);
       if (this.players.every((player) => player.hp <= 0)) this.phase = "failed";
       else if (!engine.getAliveEnemiesCount()) this.phase = this.level === COMIC_LEVELS.length - 1 ? "finished" : "cleared";
+    } else if (this.mode === "pvp") {
+      this._updatePvpPropRespawns(dt);
+    }
+  }
+
+  _pickRandomOpenCell(props) {
+    const engine = this.engine;
+    const candidates = [];
+    for (let z = 1; z < engine.mapH - 1; z++) {
+      for (let x = 1; x < engine.mapW - 1; x++) {
+        if (engine.map[z][x] !== 0) continue;
+        const wx = (x + 0.5) * CELL_SIZE;
+        const wz = (z + 0.5) * CELL_SIZE;
+        const nearProp = props.some((p) => p.active && Math.hypot(p.x - wx, p.z - wz) < CELL_SIZE * 1.1);
+        if (nearProp) continue;
+        const nearPlayer = this.players.some((pl) => pl.hp > 0 && Math.hypot(pl.pos.x - wx, pl.pos.z - wz) < CELL_SIZE * 1.4);
+        if (nearPlayer) continue;
+        candidates.push({ x: wx, z: wz });
+      }
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  _updatePvpPropRespawns(dt) {
+    const engine = this.engine;
+    for (const pr of engine.props) {
+      if (pr.type === "jumppad" || pr.type === "boostpad") continue;
+      if (pr.active) {
+        pr.respawnTimer = 0;
+        continue;
+      }
+      if (!pr.respawnTimer) {
+        pr.respawnTimer = pr.type === "barrel" ? 13 + Math.random() * 5 : 8 + Math.random() * 4;
+      } else {
+        pr.respawnTimer -= dt;
+        if (pr.respawnTimer <= 0) {
+          const spot = this._pickRandomOpenCell(engine.props);
+          if (spot) {
+            pr.x = spot.x;
+            pr.z = spot.z;
+            const baseY = pr.type === "barrel" ? 0.725 : pr.type === "medkit" ? 0.55 : 0.52;
+            pr.mesh.position.set(spot.x, baseY, spot.z);
+            pr.active = true;
+            pr.respawnTimer = 0;
+            engine.levelRoot.add(pr.mesh);
+            if (pr.type === "barrel" && !engine.hitTargets.includes(pr.mesh)) {
+              engine.hitTargets.push(pr.mesh);
+            }
+            const label = pr.type === "medkit" ? "+HP 刷新!" : pr.type === "ammo" ? "弹药刷新!" : "TNT 刷新!";
+            const color = pr.type === "medkit" ? "#38e54d" : pr.type === "ammo" ? "#ffe01b" : "#ff7a00";
+            engine.spawnPopup(new THREE.Vector3(spot.x, 1.5, spot.z), label, color, 0.9);
+          } else {
+            pr.respawnTimer = 2;
+          }
+        }
+      }
     }
   }
 
@@ -251,10 +325,13 @@ export class LanMatch {
       score: this.engine.score,
       kills: this.engine.kills,
       combo: this.engine.combo,
+      t: this.engine.levelTime,
       players: this.players.map((player) => ({
         id: player.id, life: player.life, p: player.pos.toArray(), yaw: player.yaw, pitch: player.pitch,
         hp: player.hp, onGround: player.onGround, invulnerable: player.protection > 0,
-        dash: player.dashCooldown, dashing: player.dashTimer > 0, respawn: player.respawn,
+        dash: player.dashCooldown, dashing: player.dashTimer > 0,
+        respawn: player.respawn, respawnTotal: player.respawnTotal || (this.mode === "pvp" ? 3 : 6),
+        lastKiller: player.lastKiller || null,
         kills: player.kills, deaths: player.deaths, weapon: player.weapons.currentIdx,
         ammo: player.weapons.weapons.map((weapon) => [weapon.ammo, Number.isFinite(weapon.reserve) ? weapon.reserve : null]),
         reload: player.weapons.reloading ? player.weapons.reloadTimer : 0,
@@ -262,7 +339,7 @@ export class LanMatch {
       enemies: this.engine.enemies.map((enemy) => [
         ...enemy.root.position.toArray(), enemy.root.rotation.y, Math.max(0, enemy.hp), enemy.deathAnim, enemy.animPhase,
       ]),
-      props: this.engine.props.map((prop) => prop.active),
+      props: this.engine.props.map((prop) => [prop.active, prop.x, prop.z]),
       projectiles: this.engine.enemyProjectiles.map(({ id, mesh, type, color }) => [id, type, color, ...mesh.position.toArray()]),
       events: this.events.splice(0),
     };

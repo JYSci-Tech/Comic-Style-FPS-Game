@@ -1,6 +1,6 @@
 import { ComicAudio } from "./audio.js";
 import { ComicAssets } from "./textures.js";
-import { COMIC_LEVELS } from "./levels.js";
+import { CELL_SIZE, COMIC_LEVELS } from "./levels.js";
 import { ComicFPS3DEngine } from "./engine.js";
 import { LanClient } from "./lan.js";
 import { KILL_LIMIT } from "./lan-rules.js";
@@ -16,12 +16,19 @@ const portraitCtx = portraitCanvas.getContext("2d");
 
 const hud = document.getElementById("hud");
 const startScreen = document.getElementById("start-screen");
+const guideScreen = document.getElementById("guide-screen");
 const pauseScreen = document.getElementById("pause-screen");
 const interScreen = document.getElementById("intermission-screen");
 const endScreen = document.getElementById("end-screen");
 const damageFlash = document.getElementById("damage-flash");
+const damageStamp = document.getElementById("damage-stamp");
 const crosshair = document.getElementById("crosshair");
 const hitmarker = document.getElementById("hitmarker");
+const hitRing = document.getElementById("hit-ring");
+const hitLabel = document.getElementById("hit-label");
+const reloadHud = document.getElementById("reload-hud");
+const reloadHudText = document.getElementById("reload-hud-text");
+const reloadFill = document.getElementById("reload-fill");
 const killPanels = document.getElementById("kill-panels");
 
 const hudIssue = document.getElementById("hud-issue");
@@ -45,33 +52,88 @@ const weaponSlots = Array.from(document.querySelectorAll(".w-slot"));
 
 const btnContinue = document.getElementById("btn-continue");
 const btnStart = document.getElementById("btn-start");
+const btnGuide = document.getElementById("btn-guide");
+const btnGuideClose = document.getElementById("btn-guide-close");
 const btnToggleSfx = document.getElementById("btn-toggle-sfx");
 const btnResume = document.getElementById("btn-resume");
 const btnRetryPause = document.getElementById("btn-retry-pause");
 const btnRestartPause = document.getElementById("btn-restart-pause");
+const btnHomePause = document.getElementById("btn-home-pause");
 const btnNextIssue = document.getElementById("btn-next-issue");
+const btnHomeInter = document.getElementById("btn-home-inter");
 const btnRetryLevel = document.getElementById("btn-retry-level");
 const btnRestart = document.getElementById("btn-restart");
+const btnHomeEnd = document.getElementById("btn-home-end");
 
 const audio = new ComicAudio();
 const assets = new ComicAssets();
 
 let state = "menu"; // menu | playing | paused | intermission | gameover | victory | lan
 let hitmarkerTimer = 0;
+let hurtFlashTimeout = null;
 let killPanelTimeout = null;
+let resultDelayTimer = null;
 let currentCheckpoint = null;
+let lastWeaponIdx = 0;
+
+const HURT_WORDS = ["OUCH!", "HIT!", "BAM!", "ZAP!"];
+
+function clearResultDelay() {
+  if (resultDelayTimer) {
+    clearInterval(resultDelayTimer);
+    resultDelayTimer = null;
+  }
+}
+
+function scheduleActionReveal(actionsEl, waitEl, delayMs = 2500) {
+  clearResultDelay();
+  const revealAt = performance.now() + delayMs;
+  actionsEl.classList.add("hidden");
+  actionsEl.classList.remove("actions-reveal");
+  waitEl.classList.remove("hidden");
+
+  const tick = () => {
+    const left = Math.max(0, (revealAt - performance.now()) / 1000);
+    if (left > 0.05) {
+      waitEl.textContent = `对局结果展示中 · ${Math.ceil(left)}s 后显示操作选项...`;
+    } else {
+      clearResultDelay();
+      waitEl.classList.add("hidden");
+      actionsEl.classList.remove("hidden");
+      void actionsEl.offsetWidth;
+      actionsEl.classList.add("actions-reveal");
+    }
+  };
+  tick();
+  resultDelayTimer = setInterval(tick, 100);
+}
 
 const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
   onHit(isCrit) {
+    hitmarker.classList.remove("active", "crit");
+    hitRing.classList.remove("active", "crit");
+    hitLabel.classList.remove("active", "crit");
+    void hitmarker.offsetWidth;
     hitmarker.classList.add("active");
-    hitmarker.classList.toggle("crit", !!isCrit);
-    hitmarkerTimer = 0.14;
+    hitRing.classList.add("active");
+    hitLabel.classList.add("active");
+    hitLabel.textContent = isCrit ? "CRIT!" : "HIT!";
+    if (isCrit) {
+      hitmarker.classList.add("crit");
+      hitRing.classList.add("crit");
+      hitLabel.classList.add("crit");
+    }
+    hitmarkerTimer = 0.22;
   },
   onPlayerHurt() {
-    damageFlash.style.opacity = "1";
-    setTimeout(() => {
-      damageFlash.style.opacity = "0";
-    }, 150);
+    damageStamp.textContent = HURT_WORDS[Math.floor(Math.random() * HURT_WORDS.length)];
+    damageFlash.classList.remove("active");
+    void damageFlash.offsetWidth;
+    damageFlash.classList.add("active");
+    if (hurtFlashTimeout) clearTimeout(hurtFlashTimeout);
+    hurtFlashTimeout = setTimeout(() => {
+      damageFlash.classList.remove("active");
+    }, 300);
   },
   onKillPanel(words) {
     document.getElementById("kp-text-1").textContent = words[0] || "POW!";
@@ -101,6 +163,7 @@ const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
   },
   onGameOver() {
     if (state !== "playing") return;
+    lastWeaponIdx = engine.weapons.currentIdx;
     unlockPointer();
     showEndScreen(false);
   },
@@ -138,7 +201,7 @@ function readSavedCheckpoint() {
   return null;
 }
 
-function applyCheckpoint(cp) {
+function applyCheckpoint(cp, preserveWeaponIdx = null) {
   const idx = cp ? cp.levelIdx : 0;
   engine.loadLevel(idx, false);
   if (cp) {
@@ -148,6 +211,11 @@ function applyCheckpoint(cp) {
     engine.weapons.weapons[1].reserve = Math.max(18, cp.shotgunReserve ?? 24);
     engine.weapons.weapons[2].reserve = Math.max(48, cp.raygunReserve ?? 72);
   }
+  if (Number.isInteger(preserveWeaponIdx) && preserveWeaponIdx >= 0 && preserveWeaponIdx < 3) {
+    engine.weapons.select(preserveWeaponIdx);
+    engine.weapons.switchAnim = 0;
+    engine.weapons.cooldown = 0;
+  }
   currentCheckpoint = buildCheckpointData(idx);
 }
 
@@ -155,16 +223,14 @@ function refreshCoverSaveUI() {
   const saved = readSavedCheckpoint();
   if (saved && saved.levelIdx > 0) {
     const lvl = COMIC_LEVELS[saved.levelIdx];
-    btnContinue.textContent = `继续存档 · ${lvl.issue} (${lvl.name})`;
+    btnContinue.textContent = `继续存档 · ${lvl.issue}`;
     btnContinue.classList.remove("hidden");
-    btnStart.textContent = "从第 1 期新开";
+    btnStart.textContent = "新开战役 · ISSUE #1";
     btnStart.classList.remove("primary");
-    btnStart.classList.add("secondary");
   } else {
     btnContinue.classList.add("hidden");
-    btnStart.textContent = "翻开第 1 期 · 开始战斗!";
+    btnStart.textContent = "开始战役 · ISSUE #1";
     btnStart.classList.add("primary");
-    btnStart.classList.remove("secondary");
   }
 }
 
@@ -208,7 +274,9 @@ function unlockPointer() {
 }
 
 function hideAllScreens() {
+  clearResultDelay();
   startScreen.classList.add("hidden");
+  guideScreen.classList.add("hidden");
   pauseScreen.classList.add("hidden");
   interScreen.classList.add("hidden");
   endScreen.classList.add("hidden");
@@ -236,9 +304,10 @@ function continueSavedGame() {
 
 function retryCurrentLevel() {
   audio.init();
+  const keepWeapon = state === "gameover" ? lastWeaponIdx : engine.weapons.currentIdx;
   const cp = currentCheckpoint || readSavedCheckpoint() || { levelIdx: engine.levelIdx, score: 0, kills: 0 };
   cp.levelIdx = engine.levelIdx;
-  applyCheckpoint(cp);
+  applyCheckpoint(cp, keepWeapon);
   hideAllScreens();
   hud.classList.remove("hidden");
   state = "playing";
@@ -262,6 +331,20 @@ function pauseGame() {
   pauseScreen.classList.remove("hidden");
 }
 
+function goHome() {
+  unlockPointer();
+  hideAllScreens();
+  hud.classList.add("hidden");
+  engine.mouseDown = false;
+  engine.setAds(false);
+  engine.keys = {};
+  state = "menu";
+  const saved = readSavedCheckpoint();
+  engine.loadLevel(saved?.levelIdx ?? 0, false);
+  refreshCoverSaveUI();
+  startScreen.classList.remove("hidden");
+}
+
 function showIntermission() {
   state = "intermission";
   engine.mouseDown = false;
@@ -276,7 +359,10 @@ function showIntermission() {
     累计击倒反派: ${engine.kills}<br/>
     已保存下一期检查点，进入下一期自动恢复 +35 HP
   `;
-  interScreen.classList.remove("hidden");
+  interScreen.classList.remove("hidden", "result-victory", "result-defeat");
+  void interScreen.offsetWidth;
+  interScreen.classList.add("result-victory");
+  scheduleActionReveal(document.getElementById("inter-actions"), document.getElementById("inter-wait"), 2500);
 }
 
 function nextIssue() {
@@ -308,17 +394,38 @@ function showEndScreen(victory) {
   `;
 
   btnRetryLevel.textContent = victory ? `重玩 ${engine.level.issue}` : `重开本关 (${engine.level.issue})`;
-  endScreen.classList.remove("hidden");
+  endScreen.classList.remove("hidden", "result-victory", "result-defeat");
+  void endScreen.offsetWidth;
+  endScreen.classList.add(victory ? "result-victory" : "result-defeat");
+  scheduleActionReveal(document.getElementById("end-actions"), document.getElementById("end-wait"), 2500);
 }
 
 btnContinue.addEventListener("click", continueSavedGame);
 btnStart.addEventListener("click", startNewGame);
-btnResume.addEventListener("click", resumeGame);
+btnGuide.addEventListener("click", () => guideScreen.classList.remove("hidden"));
+btnGuideClose.addEventListener("click", () => guideScreen.classList.add("hidden"));
+btnResume.addEventListener("click", () => {
+  audio.init();
+  resumeGame();
+});
 btnRetryPause.addEventListener("click", retryCurrentLevel);
 btnRestartPause.addEventListener("click", startNewGame);
-btnNextIssue.addEventListener("click", nextIssue);
+btnHomePause.addEventListener("click", goHome);
+btnNextIssue.addEventListener("click", () => {
+  audio.init();
+  nextIssue();
+});
+btnHomeInter.addEventListener("click", goHome);
 btnRetryLevel.addEventListener("click", retryCurrentLevel);
 btnRestart.addEventListener("click", startNewGame);
+btnHomeEnd.addEventListener("click", goHome);
+
+// 在任意首次点击或按键时自动唤醒 Web Audio，彻底避免浏览器自动播放策略导致无声
+const unlockAudioOnGesture = () => {
+  if (audio.enabled) audio.init();
+};
+window.addEventListener("pointerdown", unlockAudioOnGesture, { passive: true });
+window.addEventListener("keydown", unlockAudioOnGesture, { passive: true });
 
 btnToggleSfx.addEventListener("click", () => {
   const on = audio.toggle();
@@ -435,10 +542,15 @@ function updateHUD(dt) {
     hitmarkerTimer -= dt;
     if (hitmarkerTimer <= 0) {
       hitmarker.classList.remove("active", "crit");
+      hitRing.classList.remove("active", "crit");
+      hitLabel.classList.remove("active", "crit");
     }
   }
 
   crosshair.classList.toggle("ads", engine.weapons.isAds);
+  // 根据当前移动/跳跃/冲刺散布实时动态扩张准星，直观反馈射击精度
+  const spreadPx = Math.round(Math.min(28, Math.max(0, (engine.getCurrentSpread() - 0.008) * 320)));
+  crosshair.style.setProperty("--spread", `${spreadPx}px`);
 
   const lvl = engine.level;
   const pvp = state === "lan" && lan.match?.mode === "pvp";
@@ -476,7 +588,17 @@ function updateHUD(dt) {
   hudWeaponName.textContent = w.name;
   hudAmmoCur.textContent = w.ammo;
   hudAmmoRes.textContent = w.reserve === Infinity ? "∞" : w.reserve;
-  hudReloadHint.classList.toggle("hidden", !engine.weapons.reloading);
+
+  const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
+  hudReloadHint.classList.toggle("hidden", !isReloading);
+  reloadHud.classList.toggle("hidden", !isReloading);
+  if (isReloading) {
+    const leftSec = Math.max(0, engine.weapons.reloadTimer);
+    const pct = Math.min(100, Math.max(0, (1 - leftSec / w.reloadTime) * 100));
+    hudReloadHint.textContent = `RELOADING ${leftSec.toFixed(1)}s`;
+    reloadHudText.textContent = `换弹中 ${leftSec.toFixed(1)}s`;
+    reloadFill.style.width = `${pct}%`;
+  }
 
   weaponSlots.forEach((slot, idx) => {
     slot.classList.toggle("active", idx === engine.weapons.currentIdx);
@@ -487,11 +609,13 @@ function updateHUD(dt) {
 }
 
 let lastTime = performance.now();
+let menuOrbitAngle = 0.4;
 function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
 
   if (state === "playing") {
+    if (engine.weapons.root) engine.weapons.root.visible = true;
     engine.update(dt);
     engine.render();
     updateHUD(dt);
@@ -501,8 +625,23 @@ function loop(now) {
     updateHUD(dt);
     lan.view.drawLabels(miniCtx);
   } else if (state === "menu" || state === "lan") {
-    engine.player.yaw -= dt * 0.25;
-    engine._syncCamera();
+    // 3A 主界面实时 3D 航拍运镜：隐藏手部武器，实时运行移动平台/激光/道具旋转
+    if (engine.weapons.root) engine.weapons.root.visible = false;
+    menuOrbitAngle += dt * 0.16;
+    engine.levelTime += dt;
+    engine._updateDynamics(dt, [], false);
+    engine._updateProps(dt, false);
+
+    const cx = (engine.mapW * CELL_SIZE) / 2;
+    const cz = (engine.mapH * CELL_SIZE) / 2;
+    const rx = Math.max(8, engine.mapW * CELL_SIZE * 0.28);
+    const rz = Math.max(8, engine.mapH * CELL_SIZE * 0.28);
+    engine.camera.position.set(
+      cx + Math.cos(menuOrbitAngle) * rx,
+      7.2 + Math.sin(menuOrbitAngle * 1.5) * 1.1,
+      cz + Math.sin(menuOrbitAngle) * rz
+    );
+    engine.camera.lookAt(cx, 1.8, cz);
     engine.render();
   } else {
     engine.render();
