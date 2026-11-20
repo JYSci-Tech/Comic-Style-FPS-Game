@@ -48,7 +48,7 @@ export class LanMatch {
         this.events.push({ type: "popup", at: at.toArray(), text, color, scale, kind }),
       onExplosion: (at) => this.events.push({ type: "explosion", at: at.toArray() }),
       onHit: (crit, owner) => this.markHit(crit, owner),
-      onPickup: (player) => this.events.push({ type: "pickup", id: player.id }),
+      onPickup: (player, detail) => this.events.push({ type: "pickup", id: player.id, kind: detail?.kind, amount: detail?.amount, gains: detail?.gains }),
       onBounce: (player) => this.events.push({ type: "jump", id: player.id }),
       onKillPanel: (words) => this.events.push({ type: "panel", id: this.actor?.id, words }),
       onPlayerHit: (player, damage, attacker) => {

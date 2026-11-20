@@ -52,13 +52,20 @@ const bossBarBox = document.getElementById("boss-bar-box");
 const bossHpFill = document.getElementById("boss-hp-fill");
 const hudHpFill = document.getElementById("hud-hp-fill");
 const hudHpText = document.getElementById("hud-hp-text");
+const hudPortraitBox = document.getElementById("hud-portrait-box");
+const hudStatsBox = document.getElementById("hud-stats-box");
+const hudHpGain = document.getElementById("hud-hp-gain");
 const hudDashFill = document.getElementById("hud-dash-fill");
 const hudDashText = document.getElementById("hud-dash-text");
 const hudWeaponName = document.getElementById("hud-weapon-name");
+const hudAmmoBox = document.getElementById("hud-ammo-box");
+const hudAmmoReadout = document.getElementById("hud-ammo-readout");
 const hudAmmoCur = document.getElementById("hud-ammo-cur");
 const hudAmmoRes = document.getElementById("hud-ammo-res");
+const hudAmmoGain = document.getElementById("hud-ammo-gain");
 const hudReloadHint = document.getElementById("hud-reload-hint");
 const hudGrenadeBox = document.getElementById("hud-grenade-box");
+const hudGrenadeKey = document.getElementById("hud-grenade-key");
 const hudGrenadeCount = document.getElementById("hud-grenade-count");
 const weaponSlots = Array.from(document.querySelectorAll(".w-slot"));
 
@@ -85,6 +92,14 @@ let hitmarkerTimer = 0;
 let hurtFlashTimeout = null;
 let killPanelTimeout = null;
 let resultDelayTimer = null;
+let hpPickupTimeout = null;
+let ammoPickupTimeout = null;
+const slotGainTimeouts = [];
+let hpRollTimer = 0;
+let displayedHp = 100;
+let ammoRollTimer = 0;
+let displayedAmmoRes = 0;
+let lastHudWeaponIdx = -1;
 let currentCheckpoint = null;
 let lastWeaponIdx = 0;
 let pendingUnlockIdx = null;
@@ -151,6 +166,72 @@ function scheduleActionReveal(actionsEl, waitEl, delayMs = 2500) {
   resultDelayTimer = setInterval(tick, 100);
 }
 
+function triggerHpGainAnim(amount) {
+  const gain = Math.max(1, Math.round(amount || 35));
+  if (hudHpGain) hudHpGain.textContent = `+${gain} HP!`;
+
+  hudStatsBox?.classList.remove("hp-heal-active");
+  hudPortraitBox?.classList.remove("heal-pulse");
+  hudHpGain?.classList.remove("active");
+  void hudStatsBox?.offsetWidth;
+  hudStatsBox?.classList.add("hp-heal-active");
+  hudPortraitBox?.classList.add("heal-pulse");
+  hudHpGain?.classList.add("active");
+
+  if (displayedHp >= engine.player.hp) {
+    displayedHp = Math.max(0, engine.player.hp - gain);
+  }
+  hpRollTimer = 0.42;
+
+  if (hpPickupTimeout) clearTimeout(hpPickupTimeout);
+  hpPickupTimeout = setTimeout(() => {
+    hudStatsBox?.classList.remove("hp-heal-active");
+    hudPortraitBox?.classList.remove("heal-pulse");
+    hudHpGain?.classList.remove("active");
+  }, 950);
+}
+
+function triggerAmmoGainAnim(gains) {
+  const curIdx = engine.weapons.currentIdx;
+  const curGain = Array.isArray(gains) ? (gains[curIdx] || 0) : 0;
+  const totalGain = Array.isArray(gains) ? gains.reduce((a, b) => a + b, 0) : 0;
+
+  if (hudAmmoGain) {
+    hudAmmoGain.textContent = curGain > 0 ? `+${curGain} 弹药!` : totalGain > 0 ? `+${totalGain} 备弹!` : "+AMMO!";
+  }
+
+  hudAmmoBox?.classList.remove("ammo-gain-active");
+  hudAmmoGain?.classList.remove("active");
+  void hudAmmoBox?.offsetWidth;
+  hudAmmoBox?.classList.add("ammo-gain-active");
+  hudAmmoGain?.classList.add("active");
+
+  if (curGain > 0 && Number.isFinite(engine.weapons.current.reserve)) {
+    if (displayedAmmoRes >= engine.weapons.current.reserve) {
+      displayedAmmoRes = Math.max(0, engine.weapons.current.reserve - curGain);
+    }
+    ammoRollTimer = 0.42;
+  }
+
+  weaponSlots.forEach((slot, idx) => {
+    if ((gains?.[idx] || 0) > 0 && engine.weapons.isUnlocked(idx)) {
+      slot.classList.remove("slot-ammo-gain");
+      void slot.offsetWidth;
+      slot.classList.add("slot-ammo-gain");
+      if (slotGainTimeouts[idx]) clearTimeout(slotGainTimeouts[idx]);
+      slotGainTimeouts[idx] = setTimeout(() => {
+        slot.classList.remove("slot-ammo-gain");
+      }, 900);
+    }
+  });
+
+  if (ammoPickupTimeout) clearTimeout(ammoPickupTimeout);
+  ammoPickupTimeout = setTimeout(() => {
+    hudAmmoBox?.classList.remove("ammo-gain-active");
+    hudAmmoGain?.classList.remove("active");
+  }, 950);
+}
+
 const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
   onHit(isCrit) {
     hitmarker.classList.remove("active", "crit");
@@ -177,6 +258,13 @@ const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
     hurtFlashTimeout = setTimeout(() => {
       damageFlash.classList.remove("active");
     }, 300);
+  },
+  onPickup(player, detail) {
+    if (detail?.kind === "medkit") {
+      triggerHpGainAnim(detail.amount || 35);
+    } else if (detail?.kind === "ammo") {
+      triggerAmmoGainAnim(detail.gains);
+    }
   },
   onKillPanel(words) {
     document.getElementById("kp-text-1").textContent = words[0] || "POW!";
@@ -388,6 +476,7 @@ function pauseGame() {
   state = "paused";
   engine.mouseDown = false;
   engine.setAds(false);
+  engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
   engine.keys = {};
   btnRetryPause.textContent = `重开本关 (${engine.level.issue})`;
@@ -401,6 +490,7 @@ function goHome() {
   sniperScope.classList.add("hidden");
   engine.mouseDown = false;
   engine.setAds(false);
+  engine.cancelGrenadeAim();
   engine.keys = {};
   state = "menu";
   const saved = readSavedCheckpoint();
@@ -413,6 +503,7 @@ function showIntermission() {
   state = "intermission";
   engine.mouseDown = false;
   engine.setAds(false);
+  engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
   engine.keys = {};
   const lvl = engine.level;
@@ -439,6 +530,7 @@ function openWeaponSelect(targetIdx, keepStats = true) {
   pendingUnlockIdx = null;
   engine.mouseDown = false;
   engine.setAds(false);
+  engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
   engine.keys = {};
   hud.classList.add("hidden");
@@ -539,6 +631,7 @@ function showEndScreen(victory) {
   state = victory ? "victory" : "gameover";
   engine.mouseDown = false;
   engine.setAds(false);
+  engine.cancelGrenadeAim();
   engine.keys = {};
   hud.classList.add("hidden");
   sniperScope.classList.add("hidden");
@@ -617,12 +710,17 @@ document.addEventListener("pointerlockchange", () => {
     return;
   }
   const locked = document.pointerLockElement === glCanvas;
-  if (!locked && state === "playing") {
-    pauseGame();
+  if (!locked) {
+    engine.cancelGrenadeAim();
+    if (state === "playing") {
+      pauseGame();
+    }
   }
 });
 document.addEventListener("pointerlockerror", () => lan.pointerError());
 window.addEventListener("blur", () => {
+  engine.cancelGrenadeAim();
+  engine.keys = {};
   if (state === "lan" && lan.match) lan.releaseInput();
 });
 
@@ -631,6 +729,10 @@ glCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
 glCanvas.addEventListener("mousedown", (e) => {
   if (state === "lan") {
     if (!lan.canControl) return;
+    if (engine.grenadeAiming) {
+      if (e.button === 2) engine.cancelGrenadeAim();
+      return;
+    }
     if (e.button === 0) {
       engine.mouseDown = true;
       lan.action("fire");
@@ -643,6 +745,10 @@ glCanvas.addEventListener("mousedown", (e) => {
   if (state !== "playing") return;
   if (document.pointerLockElement !== glCanvas) {
     lockPointer();
+  }
+  if (engine.grenadeAiming) {
+    if (e.button === 2) engine.cancelGrenadeAim();
+    return;
   }
   if (e.button === 0) {
     engine.mouseDown = true;
@@ -667,11 +773,13 @@ window.addEventListener("mousemove", (e) => {
 
 window.addEventListener("wheel", (e) => {
   if (state === "lan" && lan.canControl) {
+    engine.cancelGrenadeAim();
     lan.weapon = (lan.weapon + (e.deltaY > 0 ? 1 : 3)) % 4;
     lan.sendInput();
     return;
   }
   if (state !== "playing") return;
+  engine.cancelGrenadeAim();
   engine.weapons.cycle(e.deltaY > 0 ? 1 : -1);
 });
 
@@ -682,24 +790,28 @@ window.addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
     if (e.repeat) return;
     if (/^Digit[1-4]$/.test(e.code)) {
+      engine.cancelGrenadeAim();
       lan.weapon = Number(e.code.at(-1)) - 1;
       lan.sendInput();
     } else if (e.code === "KeyR") lan.action("reload");
     else if (e.code === "ShiftLeft" || e.code === "ShiftRight") lan.action("dash");
     else if (e.code === "KeyC") lan.action("slide");
     else if (e.code === "Space") lan.action("jump");
-    else if (e.code === "KeyG" || e.code === "KeyQ") lan.action("grenade");
-    else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
+    else if (e.code === "KeyG" || e.code === "KeyQ") {
+      if (!engine.grenadeAiming && engine.startGrenadeAim(e.code)) {
+        lan.sendInput();
+      }
+    } else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
     else if (e.code === "KeyM") {
       btnToggleSfx.textContent = engine.audio.toggle() ? "音效: 开启" : "音效: 关闭";
     } else lan.sendInput();
     return;
   }
 
-  if (e.code === "Digit1") engine.weapons.select(0);
-  else if (e.code === "Digit2") engine.weapons.select(1);
-  else if (e.code === "Digit3") engine.weapons.select(2);
-  else if (e.code === "Digit4") engine.weapons.select(3);
+  if (e.code === "Digit1") { engine.cancelGrenadeAim(); engine.weapons.select(0); }
+  else if (e.code === "Digit2") { engine.cancelGrenadeAim(); engine.weapons.select(1); }
+  else if (e.code === "Digit3") { engine.cancelGrenadeAim(); engine.weapons.select(2); }
+  else if (e.code === "Digit4") { engine.cancelGrenadeAim(); engine.weapons.select(3); }
   else if (e.code === "KeyR") engine.weapons.startReload();
   else if (e.code === "ShiftLeft" || e.code === "ShiftRight") engine.triggerDash();
   else if (e.code === "KeyC") engine.triggerSlide();
@@ -707,7 +819,9 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     engine.triggerJump();
   } else if (e.code === "KeyG" || e.code === "KeyQ") {
-    engine.throwGrenade();
+    if (!e.repeat && !engine.grenadeAiming) {
+      engine.startGrenadeAim(e.code);
+    }
   } else if (e.code === "KeyE" || e.code === "KeyV") {
     engine.triggerMeleePunch();
   } else if (e.code === "KeyM") {
@@ -717,6 +831,22 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("keyup", (e) => {
+  if (engine.grenadeAiming && (e.code === engine.grenadeAimKey || e.code === "KeyG" || e.code === "KeyQ")) {
+    engine.keys[e.code] = false;
+    if (state === "lan") {
+      if (lan.canControl && engine.canThrowGrenade()) {
+        engine.cancelGrenadeAim();
+        lan.action("grenade");
+      } else {
+        engine.cancelGrenadeAim();
+      }
+    } else if (state === "playing") {
+      engine.releaseGrenadeAim();
+    } else {
+      engine.cancelGrenadeAim();
+    }
+    return;
+  }
   if (!engine.keys[e.code]) return;
   engine.keys[e.code] = false;
   if (state === "lan" && lan.canControl) lan.sendInput();
@@ -763,9 +893,21 @@ function updateHUD(dt) {
     bossBarBox.classList.add("hidden");
   }
 
-  const hpPct = Math.max(0, (engine.player.hp / engine.player.maxHp) * 100);
+  if (hpRollTimer > 0 && engine.player.hp > displayedHp) {
+    hpRollTimer = Math.max(0, hpRollTimer - dt);
+    displayedHp += (engine.player.hp - displayedHp) * Math.min(1, dt * 11);
+    if (engine.player.hp - displayedHp < 0.6 || hpRollTimer === 0) {
+      displayedHp = engine.player.hp;
+      hpRollTimer = 0;
+    }
+  } else {
+    displayedHp = engine.player.hp;
+    hpRollTimer = 0;
+  }
+
+  const hpPct = Math.max(0, (displayedHp / engine.player.maxHp) * 100);
   hudHpFill.style.width = `${hpPct}%`;
-  hudHpText.textContent = Math.ceil(engine.player.hp);
+  hudHpText.textContent = Math.ceil(displayedHp);
 
   const dashReady = engine.player.dashCooldown <= 0;
   const dashPct = dashReady ? 100 : Math.max(0, (1 - engine.player.dashCooldown / 1.35) * 100);
@@ -773,13 +915,33 @@ function updateHUD(dt) {
   hudDashText.textContent = dashReady ? "RDY" : `${engine.player.dashCooldown.toFixed(1)}s`;
 
   const w = engine.weapons.current;
+  if (engine.weapons.currentIdx !== lastHudWeaponIdx || !Number.isFinite(w.reserve)) {
+    lastHudWeaponIdx = engine.weapons.currentIdx;
+    displayedAmmoRes = w.reserve;
+    ammoRollTimer = 0;
+  } else if (ammoRollTimer > 0 && w.reserve > displayedAmmoRes) {
+    ammoRollTimer = Math.max(0, ammoRollTimer - dt);
+    displayedAmmoRes += (w.reserve - displayedAmmoRes) * Math.min(1, dt * 11);
+    if (w.reserve - displayedAmmoRes < 0.6 || ammoRollTimer === 0) {
+      displayedAmmoRes = w.reserve;
+      ammoRollTimer = 0;
+    }
+  } else {
+    displayedAmmoRes = w.reserve;
+    ammoRollTimer = 0;
+  }
+
   hudWeaponName.textContent = w.name;
   hudAmmoCur.textContent = w.ammo;
-  hudAmmoRes.textContent = w.reserve === Infinity ? "∞" : w.reserve;
+  hudAmmoRes.textContent = w.reserve === Infinity ? "∞" : Math.round(displayedAmmoRes);
 
   const gCount = Math.max(0, engine.player.grenades || 0);
   hudGrenadeCount.textContent = `x${gCount}`;
   hudGrenadeBox.classList.toggle("empty", gCount === 0);
+  hudGrenadeBox.classList.toggle("aiming", engine.grenadeAiming);
+  if (hudGrenadeKey) {
+    hudGrenadeKey.textContent = engine.grenadeAiming ? "松开投掷 · 右键取消" : "[G] 手雷";
+  }
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
   hudReloadHint.classList.toggle("hidden", !isReloading);
@@ -812,10 +974,12 @@ function loop(now) {
   if (state === "playing") {
     if (engine.weapons.root) engine.weapons.root.visible = true;
     engine.update(dt);
+    engine.updateGrenadeAim(dt);
     engine.render();
     updateHUD(dt);
   } else if (state === "lan" && lan.match) {
     lan.update(dt);
+    engine.updateGrenadeAim(dt);
     engine.render();
     updateHUD(dt);
     lan.view.drawLabels(miniCtx);

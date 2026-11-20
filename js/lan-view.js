@@ -225,6 +225,7 @@ export class LanView {
       engine.audio.playSlide();
     } else if (event.type === "pickup" && local) {
       engine.audio.playPickup();
+      engine.callbacks.onPickup?.(engine.player, { kind: event.kind, amount: event.amount, gains: event.gains });
     } else if (event.type === "hit" && local) {
       engine.audio.playHit(event.crit);
       engine.callbacks.onHit(event.crit);

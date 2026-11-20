@@ -373,6 +373,7 @@ export class LanClient {
     this.engine.keys = {};
     this.engine.mouseDown = false;
     this.engine.setAds(false);
+    this.engine.cancelGrenadeAim?.();
     this.pending.length = 0;
   }
 

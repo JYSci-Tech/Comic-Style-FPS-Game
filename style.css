@@ -326,6 +326,8 @@ html, body {
 }
 
 .stats-box {
+  position: relative;
+  overflow: visible;
   min-width: 225px;
   background: var(--paper);
   display: flex;
@@ -346,6 +348,7 @@ html, body {
 }
 
 .bar-track {
+  position: relative;
   flex: 1;
   height: 16px;
   background: #232028;
@@ -359,8 +362,11 @@ html, body {
 }
 
 .hp-fill {
+  position: relative;
+  overflow: hidden;
   background: linear-gradient(90deg, #ff2a44, #ff6b2b);
   width: 100%;
+  transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s ease;
 }
 
 .dash-fill {
@@ -409,6 +415,8 @@ html, body {
 }
 
 .ammo-box {
+  position: relative;
+  overflow: visible;
   background: var(--yellow);
   min-width: 200px;
   text-align: right;
@@ -1781,9 +1789,224 @@ html, body {
   color: #bbb;
 }
 
+.grenade-box.aiming {
+  background: #ff2a44;
+  border-color: var(--yellow);
+  box-shadow: 6px 6px 0 var(--ink), 0 0 22px rgba(255, 224, 27, 0.92);
+  transform: skewX(-5deg) scale(1.08) translateY(-4px);
+}
+
+.grenade-box.aiming .grenade-key {
+  background: var(--cyan);
+  color: var(--ink);
+  animation: grenade-key-pulse 0.55s infinite alternate;
+}
+
+@keyframes grenade-key-pulse {
+  from { background: var(--cyan); }
+  to { background: var(--yellow); }
+}
+
 .grenade-count {
   font-family: var(--font-display);
   font-size: 30px;
   line-height: 1;
   text-shadow: 2px 2px 0 var(--ink);
+}
+
+/* ================= 拾取医疗包 / 弹药 HUD 增加动画 ================= */
+.hud-gain-pop {
+  position: absolute;
+  top: -12px;
+  right: 8px;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 1px;
+  padding: 2px 10px;
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 6;
+  white-space: nowrap;
+  transform: translateY(8px) scale(0.6) rotate(-5deg);
+}
+
+.hp-gain-pop {
+  background: #38e54d;
+  color: var(--ink);
+}
+
+.ammo-gain-pop {
+  background: #00e5ff;
+  color: var(--ink);
+  top: -16px;
+  right: 6px;
+}
+
+.hud-gain-pop.active {
+  animation: comic-gain-pop 0.95s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+}
+
+@keyframes comic-gain-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.5) rotate(-8deg);
+  }
+  18% {
+    opacity: 1;
+    transform: translateY(-20px) scale(1.24) rotate(-3deg);
+  }
+  42% {
+    opacity: 1;
+    transform: translateY(-26px) scale(1.06) rotate(-2deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-44px) scale(0.95) rotate(0deg);
+  }
+}
+
+#hud-stats-box.hp-heal-active {
+  animation: hud-heal-bounce 0.65s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  border-color: #38e54d;
+  box-shadow: 6px 6px 0 var(--ink), 0 0 24px rgba(56, 229, 77, 0.9);
+}
+
+@keyframes hud-heal-bounce {
+  0% { transform: scale(1) translateY(0) rotate(0deg); }
+  25% { transform: scale(1.09) translateY(-5px) rotate(-1.5deg); }
+  55% { transform: scale(1.03) translateY(-2px) rotate(0.5deg); }
+  100% { transform: scale(1) translateY(0) rotate(0deg); }
+}
+
+#hud-stats-box.hp-heal-active .hp-fill {
+  background: linear-gradient(90deg, #16db4e, #a8ff3e, #38e54d);
+  box-shadow: 0 0 12px rgba(56, 229, 77, 0.9);
+}
+
+#hud-stats-box.hp-heal-active .hp-fill::after {
+  content: "";
+  position: absolute;
+  inset: -4px -24px;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.92) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: bar-light-sweep 0.58s ease-out forwards;
+}
+
+@keyframes bar-light-sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(130%); }
+}
+
+#hud-stats-box.hp-heal-active #hud-hp-text {
+  display: inline-block;
+  color: #12b83e;
+  text-shadow: 1.5px 1.5px 0 var(--ink);
+  animation: hud-num-pop 0.55s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+#hud-portrait-box.heal-pulse {
+  animation: portrait-heal-pop 0.6s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  box-shadow: 5px 5px 0 var(--ink), 0 0 22px rgba(56, 229, 77, 0.92);
+}
+
+@keyframes portrait-heal-pop {
+  0% { transform: rotate(-2deg) scale(1); }
+  30% { transform: rotate(-2deg) scale(1.13); background: #38e54d; }
+  100% { transform: rotate(-2deg) scale(1); }
+}
+
+.ammo-shine-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ammo-shine {
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  left: -45%;
+  width: 45%;
+  background: linear-gradient(105deg, transparent 0%, rgba(255, 255, 255, 0.88) 45%, rgba(0, 229, 255, 0.72) 60%, transparent 100%);
+  transform: translateX(-120%) skewX(-18deg);
+  opacity: 0;
+}
+
+#hud-ammo-box.ammo-gain-active {
+  animation: hud-ammo-slam 0.68s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  box-shadow: 7px 7px 0 var(--ink), 0 0 28px rgba(0, 229, 255, 0.95);
+  background: #fff36b;
+}
+
+#hud-ammo-box.ammo-gain-active .ammo-shine {
+  opacity: 1;
+  animation: ammo-glare-sweep 0.55s ease-out forwards;
+}
+
+@keyframes hud-ammo-slam {
+  0% { transform: skewX(-5deg) scale(1) translateY(0); }
+  22% { transform: skewX(-5deg) scale(1.14) translateY(-7px); }
+  55% { transform: skewX(-5deg) scale(1.04) translateY(-2px); }
+  100% { transform: skewX(-5deg) scale(1) translateY(0); }
+}
+
+@keyframes ammo-glare-sweep {
+  0% { transform: translateX(-120%) skewX(-18deg); }
+  100% { transform: translateX(380%) skewX(-18deg); }
+}
+
+#hud-ammo-box.ammo-gain-active #hud-ammo-readout {
+  animation: hud-ammo-readout-pop 0.62s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+#hud-ammo-box.ammo-gain-active #hud-ammo-res {
+  display: inline-block;
+  color: #00d9ff;
+  text-shadow:
+    -2px -2px 0 var(--ink),
+    2px -2px 0 var(--ink),
+    -2px 2px 0 var(--ink),
+    2px 2px 0 var(--ink),
+    4px 4px 0 var(--ink);
+  animation: hud-res-pop 0.65s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+@keyframes hud-num-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.55); }
+  100% { transform: scale(1); }
+}
+
+@keyframes hud-ammo-readout-pop {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+
+@keyframes hud-res-pop {
+  0% { transform: scale(1); }
+  28% { transform: scale(1.42) translateY(-2px); }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.w-slot {
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+
+.w-slot.slot-ammo-gain {
+  background: var(--cyan);
+  color: var(--ink);
+  animation: slot-gain-bounce 0.68s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  box-shadow: 4px 4px 0 var(--ink), 0 0 14px rgba(0, 229, 255, 0.85);
+}
+
+@keyframes slot-gain-bounce {
+  0% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-8px) scale(1.14); }
+  65% { transform: translateY(-4px) scale(1.04); }
+  100% { transform: translateY(0) scale(1); }
 }
