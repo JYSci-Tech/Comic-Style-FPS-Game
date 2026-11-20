@@ -686,6 +686,7 @@ window.addEventListener("keydown", (e) => {
       lan.sendInput();
     } else if (e.code === "KeyR") lan.action("reload");
     else if (e.code === "ShiftLeft" || e.code === "ShiftRight") lan.action("dash");
+    else if (e.code === "KeyC") lan.action("slide");
     else if (e.code === "Space") lan.action("jump");
     else if (e.code === "KeyG" || e.code === "KeyQ") lan.action("grenade");
     else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
@@ -701,6 +702,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Digit4") engine.weapons.select(3);
   else if (e.code === "KeyR") engine.weapons.startReload();
   else if (e.code === "ShiftLeft" || e.code === "ShiftRight") engine.triggerDash();
+  else if (e.code === "KeyC") engine.triggerSlide();
   else if (e.code === "Space") {
     e.preventDefault();
     engine.triggerJump();

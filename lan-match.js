@@ -8,7 +8,7 @@ import { ACTIONS, INPUT_KEYS, KILL_LIMIT } from "./js/lan-rules.js";
 const NO_INPUT = { keys: {}, fire: false, ads: false };
 const ARENA_SPAWNS = [[2.5, 2.5], [12.5, 9.5], [11.5, 1.5], [2.5, 8.5]];
 const silent = {};
-for (const name of ["Jump", "Dash", "Punch", "Reload", "DryFire", "Magnum", "Shotgun", "Raygun", "Sniper",
+for (const name of ["Jump", "Dash", "Slide", "Punch", "Reload", "DryFire", "Magnum", "Shotgun", "Raygun", "Sniper",
   "Throw", "Hit", "EnemyDown", "Explosion", "Hurt", "Pickup", "EnemyShot"]) {
   silent["play" + name] = () => {};
 }
@@ -156,9 +156,11 @@ export class LanMatch {
 
   syncAvatar(player) {
     player.avatar.root.position.copy(player.pos);
+    player.avatar.root.position.y -= (player.slideAmount || 0) * 0.45;
     player.avatar.root.rotation.y = player.yaw;
+    player.avatar.root.rotation.x = (player.slideAmount || 0) * 0.55;
     player.avatar.root.visible = player.hp > 0;
-    const swing = Math.sin(player.bobPhase) * 0.48;
+    const swing = player.slideTimer > 0 ? 0 : Math.sin(player.bobPhase) * 0.48;
     player.avatar.leftLeg.rotation.x = swing;
     player.avatar.rightLeg.rotation.x = -swing;
   }
@@ -251,6 +253,7 @@ export class LanMatch {
       if (player.actions.has("reload")) player.weapons.startReload();
       if (player.actions.has("jump") && engine.triggerJump()) this.events.push({ type: "jump", id: player.id });
       if (player.actions.has("dash") && engine.triggerDash()) this.events.push({ type: "dash", id: player.id });
+      if (player.actions.has("slide") && engine.triggerSlide()) this.events.push({ type: "slide", id: player.id });
       player.protection = Math.max(0, player.protection - dt);
       engine._updatePlayer(dt);
       engine._updateProps(dt);
@@ -343,7 +346,7 @@ export class LanMatch {
       players: this.players.map((player) => ({
         id: player.id, life: player.life, p: player.pos.toArray(), yaw: player.yaw, pitch: player.pitch,
         hp: player.hp, onGround: player.onGround, invulnerable: player.protection > 0,
-        dash: player.dashCooldown, dashing: player.dashTimer > 0,
+        dash: player.dashCooldown, dashing: player.dashTimer > 0, sliding: player.slideTimer > 0,
         respawn: player.respawn, respawnTotal: player.respawnTotal || (this.mode === "pvp" ? 3 : 6),
         lastKiller: player.lastKiller || null,
         grenades: player.grenades,

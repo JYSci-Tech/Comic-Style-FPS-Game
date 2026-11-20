@@ -830,7 +830,7 @@ export class WeaponSystem3D {
     return this.currentModel.muzzle.getWorldPosition(target);
   }
 
-  update(dt, isMoving) {
+  update(dt, isMoving, slideAmount = 0) {
     if (this.autoReloadTimer > 0) {
       this.autoReloadTimer -= dt;
       if (this.autoReloadTimer <= 0 && this.current.ammo === 0) this.startReload();
@@ -1045,15 +1045,16 @@ export class WeaponSystem3D {
       }
     }
 
+    const slideTilt = slideAmount * (1 - this.adsAmount * 0.65);
     this.root.position.set(
-      basePos.x + bobX + reloadPosX,
-      basePos.y + bobY + reloadPosY - switchDip,
+      basePos.x + bobX + reloadPosX - slideTilt * 0.04,
+      basePos.y + bobY + reloadPosY - switchDip - slideTilt * 0.035,
       basePos.z + this.recoil * 0.09 + reloadPosZ
     );
     this.root.rotation.set(
       this.recoil * 0.24 + reloadRotX,
       reloadRotY,
-      reloadRotZ
+      reloadRotZ + slideTilt * 0.32
     );
 
     // 开镜时隐藏狙击枪 3D 模型，让 2D 高倍狙击镜画面干净呈现

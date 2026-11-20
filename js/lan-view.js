@@ -134,6 +134,7 @@ export class LanView {
       avatar.position.fromArray(player.p);
       if (avatar.life !== player.life) avatar.root.position.copy(avatar.position);
       avatar.yaw = player.yaw;
+      avatar.sliding = player.sliding === true;
       avatar.root.visible = player.hp > 0;
       avatar.life = player.life;
     }
@@ -220,6 +221,8 @@ export class LanView {
       engine.audio.playJump();
     } else if (event.type === "dash" && local) {
       engine.audio.playDash();
+    } else if (event.type === "slide" && local) {
+      engine.audio.playSlide();
     } else if (event.type === "pickup" && local) {
       engine.audio.playPickup();
     } else if (event.type === "hit" && local) {
@@ -253,14 +256,17 @@ export class LanView {
     const moving = player.pos.distanceToSquared(this.localPosition) > 0.001;
     player.moveSpeedRatio += ((moving ? 1 : 0) - (player.moveSpeedRatio || 0)) * Math.min(1, dt * 14);
     player.dashTimer = this.me?.dashing ? 0.1 : 0;
+    player.slideTimer = this.me?.sliding ? 0.1 : 0;
+    const targetSlide = this.me?.sliding ? 1 : 0;
+    player.slideAmount = (player.slideAmount || 0) + (targetSlide - (player.slideAmount || 0)) * Math.min(1, dt * (targetSlide ? 20 : 12));
     player.pos.lerp(this.localPosition, alpha);
-    if (moving && player.onGround) player.bobPhase += dt * 11.5;
+    if (moving && player.onGround && !this.me?.sliding) player.bobPhase += dt * 11.5;
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.fireTimer = Math.max(0, player.fireTimer - dt);
     engine._decayCameraRecoil(dt);
-    engine.speedLineAlpha = this.me.dashing ? 1 : Math.max(0, engine.speedLineAlpha - dt * 3);
-    engine.weapons.update(dt, moving && player.onGround);
-    const baseFov = this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount);
+    engine.speedLineAlpha = (this.me.dashing || this.me.sliding) ? Math.max(engine.speedLineAlpha, this.me.dashing ? 1 : 0.65) : Math.max(0, engine.speedLineAlpha - dt * 3);
+    engine.weapons.update(dt, moving && player.onGround && !this.me?.sliding, player.slideAmount);
+    const baseFov = (this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount)) + player.slideAmount * 9;
     const fov = baseFov + engine.recoilFovKick;
     if (Math.abs(engine.camera.fov - fov) > 0.05) {
       engine.camera.fov += (fov - engine.camera.fov) * alpha;
@@ -283,10 +289,13 @@ export class LanView {
     for (const avatar of this.avatars.values()) {
       const speed = this.delta.subVectors(avatar.position, avatar.root.position).length();
       avatar.root.position.lerp(avatar.position, alpha);
+      const slideDrop = avatar.sliding ? 0.45 : 0;
+      avatar.root.position.y -= slideDrop;
+      avatar.root.rotation.x += ((avatar.sliding ? 0.55 : 0) - avatar.root.rotation.x) * alpha;
       avatar.root.rotation.y += Math.atan2(Math.sin(avatar.yaw - avatar.root.rotation.y),
         Math.cos(avatar.yaw - avatar.root.rotation.y)) * alpha;
-      if (speed > 0.03) avatar.step += dt * 11.5;
-      const swing = Math.sin(avatar.step) * Math.min(0.48, speed * 2);
+      if (speed > 0.03 && !avatar.sliding) avatar.step += dt * 11.5;
+      const swing = avatar.sliding ? 0 : Math.sin(avatar.step) * Math.min(0.48, speed * 2);
       avatar.leftLeg.rotation.x = swing;
       avatar.rightLeg.rotation.x = -swing;
     }
