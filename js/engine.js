@@ -286,15 +286,18 @@ export class ComicFPS3DEngine {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(baseX, spec.h / 2, baseZ);
     mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.assets.addCreaseLines(mesh);
-    // 顶部添加漫画高对比装饰条（可踩踏平台带青色/金色边框）
-    const cap = new THREE.Mesh(
-      new THREE.BoxGeometry(spec.w * 0.84, 0.12, spec.d * 0.84),
-      this.assets.toonMat({ color: spec.rideable ? 0x181822 : 0xff2a44 })
-    );
-    cap.position.y = spec.h / 2 + 0.06;
-    mesh.add(cap);
+    // Keep cached world shadows off the moving surface.
+    mesh.receiveShadow = false;
+    if (this.renderer) {
+      // Use a solid silhouette instead of rasterizing a thin line on the box's depth.
+      this.assets.addOutline(mesh, 1.03);
+      const cap = new THREE.Mesh(
+        new THREE.BoxGeometry(spec.w * 0.84, 0.14, spec.d * 0.84),
+        this.assets.toonMat({ color: spec.rideable ? 0x181822 : 0xff2a44 })
+      );
+      cap.position.y = spec.h / 2 + 0.05;
+      mesh.add(cap);
+    }
     mesh.userData = { kind: "wall" };
     this.levelRoot.add(mesh);
     this.hitTargets.push(mesh);
