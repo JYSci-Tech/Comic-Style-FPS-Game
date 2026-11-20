@@ -1574,7 +1574,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: clamp(12px, 2vh, 20px);
 }
 
 .ws-header {
@@ -1582,7 +1582,7 @@ html, body {
 }
 
 .ws-title {
-  font-size: clamp(34px, 5vw, 56px);
+  font-size: clamp(28px, 4.2vh, 48px);
   margin: 4px 0 8px;
 }
 
@@ -1591,9 +1591,9 @@ html, body {
   display: inline-block;
   background: var(--paper);
   color: var(--ink);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
-  padding: 6px 18px;
+  padding: 5px 16px;
   border: 4px solid var(--ink);
   box-shadow: 5px 5px 0 var(--ink);
   transform: skewX(-5deg);
@@ -1601,20 +1601,23 @@ html, body {
 
 .ws-cards {
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 18px;
 }
 
 .ws-card {
   position: relative;
+  flex: 1 1 240px;
+  max-width: 310px;
   display: flex;
   flex-direction: column;
   background: var(--paper);
   color: var(--ink);
   border: 5px solid var(--ink);
   box-shadow: 8px 8px 0 var(--ink);
-  padding: 14px;
+  padding: 12px;
   text-align: left;
   cursor: pointer;
   font-family: var(--font-body);
@@ -1658,10 +1661,11 @@ html, body {
 .ws-art-frame {
   width: 100%;
   aspect-ratio: 16 / 9;
+  max-height: clamp(110px, 20vh, 170px);
   border: 4px solid var(--ink);
   box-shadow: 4px 4px 0 var(--ink);
   overflow: hidden;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   background: #14141e;
 }
 

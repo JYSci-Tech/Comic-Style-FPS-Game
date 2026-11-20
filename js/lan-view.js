@@ -176,6 +176,7 @@ export class LanView {
       }
       if (local) {
         engine.player.fireTimer = 0.22;
+        engine.weapons.cooldown = weapon.fireRate;
         engine.weapons.recoil = weapon.recoilKick;
         engine.weapons.muzzleFlash = 0.075;
         engine.addShotRecoil(weapon.recoilKick);
