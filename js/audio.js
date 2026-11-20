@@ -296,6 +296,26 @@ export class ComicAudio {
     noise.stop(t + 0.19);
   }
 
+  playThrow() {
+    if (!this._canPlay()) return;
+    const t = this.ctx.currentTime;
+    this._clickAt(t, 920, 0.12);
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(750, t + 0.03);
+    filter.frequency.exponentialRampToValueAtTime(360, t + 0.19);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.25, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    noise.connect(filter);
+    filter.connect(g);
+    g.connect(this.ctx.destination);
+    noise.start(t + 0.03);
+    noise.stop(t + 0.21);
+  }
+
   playPickup() {
     if (!this._canPlay()) return;
     const t = this.ctx.currentTime;

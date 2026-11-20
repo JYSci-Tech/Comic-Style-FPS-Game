@@ -58,6 +58,8 @@ const hudWeaponName = document.getElementById("hud-weapon-name");
 const hudAmmoCur = document.getElementById("hud-ammo-cur");
 const hudAmmoRes = document.getElementById("hud-ammo-res");
 const hudReloadHint = document.getElementById("hud-reload-hint");
+const hudGrenadeBox = document.getElementById("hud-grenade-box");
+const hudGrenadeCount = document.getElementById("hud-grenade-count");
 const weaponSlots = Array.from(document.querySelectorAll(".w-slot"));
 
 const btnContinue = document.getElementById("btn-continue");
@@ -217,6 +219,7 @@ function buildCheckpointData(levelIdx) {
     levelIdx,
     score: engine.score,
     kills: engine.kills,
+    grenades: engine.player.grenades,
     unlocked: [...engine.weapons.unlocked],
     shotgunReserve: Math.max(18, ws[1].reserve),
     raygunReserve: Math.max(48, ws[2].reserve),
@@ -255,6 +258,7 @@ function applyCheckpoint(cp, preserveWeaponIdx = null) {
     engine.score = cp.score || 0;
     engine.kills = cp.kills || 0;
     engine.player.hp = engine.player.maxHp; // 重开本关满血复活，避免低血死循环
+    engine.player.grenades = typeof cp.grenades === "number" ? cp.grenades : (idx === 0 ? 1 : 2);
     engine.weapons.weapons[1].reserve = Math.max(18, cp.shotgunReserve ?? 24);
     engine.weapons.weapons[2].reserve = Math.max(48, cp.raygunReserve ?? 72);
     engine.weapons.weapons[3].reserve = Math.max(12, cp.sniperReserve ?? 16);
@@ -420,7 +424,7 @@ function showIntermission() {
   document.getElementById("inter-stats").innerHTML = `
     当前得分: ${engine.score}<br/>
     累计击倒反派: ${engine.kills}<br/>
-    已保存下一期检查点，进入下一期自动恢复 +35 HP
+    已保存下一期检查点，进入下一期自动恢复 +35 HP 并获赠 +2 颗手雷
   `;
   interScreen.classList.remove("hidden", "result-victory", "result-defeat");
   void interScreen.offsetWidth;
@@ -683,6 +687,7 @@ window.addEventListener("keydown", (e) => {
     } else if (e.code === "KeyR") lan.action("reload");
     else if (e.code === "ShiftLeft" || e.code === "ShiftRight") lan.action("dash");
     else if (e.code === "Space") lan.action("jump");
+    else if (e.code === "KeyG" || e.code === "KeyQ") lan.action("grenade");
     else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
     else if (e.code === "KeyM") {
       btnToggleSfx.textContent = engine.audio.toggle() ? "音效: 开启" : "音效: 关闭";
@@ -699,6 +704,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "Space") {
     e.preventDefault();
     engine.triggerJump();
+  } else if (e.code === "KeyG" || e.code === "KeyQ") {
+    engine.throwGrenade();
   } else if (e.code === "KeyE" || e.code === "KeyV") {
     engine.triggerMeleePunch();
   } else if (e.code === "KeyM") {
@@ -767,6 +774,10 @@ function updateHUD(dt) {
   hudWeaponName.textContent = w.name;
   hudAmmoCur.textContent = w.ammo;
   hudAmmoRes.textContent = w.reserve === Infinity ? "∞" : w.reserve;
+
+  const gCount = Math.max(0, engine.player.grenades || 0);
+  hudGrenadeCount.textContent = `x${gCount}`;
+  hudGrenadeBox.classList.toggle("empty", gCount === 0);
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
   hudReloadHint.classList.toggle("hidden", !isReloading);

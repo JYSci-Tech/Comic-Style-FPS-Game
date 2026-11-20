@@ -9,7 +9,7 @@ const NO_INPUT = { keys: {}, fire: false, ads: false };
 const ARENA_SPAWNS = [[2.5, 2.5], [12.5, 9.5], [11.5, 1.5], [2.5, 8.5]];
 const silent = {};
 for (const name of ["Jump", "Dash", "Punch", "Reload", "DryFire", "Magnum", "Shotgun", "Raygun", "Sniper",
-  "Hit", "EnemyDown", "Explosion", "Hurt", "Pickup", "EnemyShot"]) {
+  "Throw", "Hit", "EnemyDown", "Explosion", "Hurt", "Pickup", "EnemyShot"]) {
   silent["play" + name] = () => {};
 }
 const texture = new THREE.Texture();
@@ -37,11 +37,17 @@ export class LanMatch {
       onPopup: (at, text, color, scale, kind = "bubble") =>
         this.events.push({ type: "popup", at: at.toArray(), text, color, scale, kind }),
       onExplosion: (at) => this.events.push({ type: "explosion", at: at.toArray() }),
-      onHit: (crit) => this.markHit(crit),
+      onHit: (crit, owner) => this.markHit(crit, owner),
       onPickup: (player) => this.events.push({ type: "pickup", id: player.id }),
       onBounce: (player) => this.events.push({ type: "jump", id: player.id }),
       onKillPanel: (words) => this.events.push({ type: "panel", id: this.actor?.id, words }),
-      onPlayerHit: (player, damage) => this.engine._damagePlayer(damage, player),
+      onPlayerHit: (player, damage, attacker) => {
+        const prev = this.actor;
+        if (attacker) this.actor = attacker;
+        const ok = this.engine._damagePlayer(damage, player);
+        this.actor = prev;
+        return ok;
+      },
       onPlayerHurt: (player) => this.events.push({ type: "hurt", id: player.id }),
       onGameOver: (player) => this.onDeath(player),
     });
@@ -73,6 +79,7 @@ export class LanMatch {
   spawn(player, respawn, keepStats = false) {
     const previousHp = player.hp || 0;
     const previousWeapon = player.weapons ? player.weapons.currentIdx : 0;
+    const previousGrenades = typeof player.grenades === "number" ? player.grenades : 1;
     Object.assign(player, createPlayer());
     player.life = (player.life || 0) + 1;
     player.input = NO_INPUT;
@@ -84,6 +91,9 @@ export class LanMatch {
     player.protection = respawn ? 1.2 : 0;
     if (!keepStats || !previousHp) player.weapons = new WeaponSystem3D(null, assets, silent);
     if (keepStats && previousHp) player.hp = Math.min(player.maxHp, previousHp + 35);
+    if (keepStats) player.grenades = previousGrenades + 2;
+    else if (respawn) player.grenades = this.mode === "pvp" ? Math.max(1, previousGrenades) : previousGrenades;
+    else player.grenades = 1;
     if (respawn || keepStats) {
       player.weapons.select(previousWeapon);
       player.weapons.switchAnim = 0;
@@ -160,8 +170,8 @@ export class LanMatch {
     this.engine.keys = player.input.keys;
   }
 
-  markHit(crit) {
-    if (this.actor) this.events.push({ type: "hit", id: this.actor.id, crit });
+  markHit(crit, owner = this.actor) {
+    if (owner) this.events.push({ type: "hit", id: owner.id, crit });
   }
 
   onDeath(player) {
@@ -201,6 +211,9 @@ export class LanMatch {
           engine.spawnPopup(target.clone().add(new THREE.Vector3(0, 0.35, 0)), "-65 ★", "#ffe01b", 1.15, "headshot");
         }
       }
+    }
+    if (this.phase === "playing" && player.hp > 0 && player.actions.has("grenade") && engine.throwGrenade(player)) {
+      this.events.push({ type: "throw", id: player.id });
     }
     if (this.phase === "playing" && player.hp > 0 && (player.actions.has("fire")
       || (player.input.fire && player.weapons.current.auto))) {
@@ -249,6 +262,7 @@ export class LanMatch {
       if (player.hp > 0) this.attack(player);
     }
     this.actor = null;
+    engine._updateGrenades(dt, this.players);
     if (this.mode === "coop") {
       engine._updateEnemies(dt, this.players);
       engine._updateProjectiles(dt, this.players);
@@ -332,6 +346,7 @@ export class LanMatch {
         dash: player.dashCooldown, dashing: player.dashTimer > 0,
         respawn: player.respawn, respawnTotal: player.respawnTotal || (this.mode === "pvp" ? 3 : 6),
         lastKiller: player.lastKiller || null,
+        grenades: player.grenades,
         kills: player.kills, deaths: player.deaths, weapon: player.weapons.currentIdx,
         ammo: player.weapons.weapons.map((weapon) => [weapon.ammo, Number.isFinite(weapon.reserve) ? weapon.reserve : null]),
         reload: player.weapons.reloading ? player.weapons.reloadTimer : 0,
@@ -341,6 +356,7 @@ export class LanMatch {
       ]),
       props: this.engine.props.map((prop) => [prop.active, prop.x, prop.z]),
       projectiles: this.engine.enemyProjectiles.map(({ id, mesh, type, color }) => [id, type, color, ...mesh.position.toArray()]),
+      grenades: this.engine.grenades.map(({ id, mesh, fuse }) => [id, ...mesh.position.toArray(), fuse]),
       events: this.events.splice(0),
     };
   }

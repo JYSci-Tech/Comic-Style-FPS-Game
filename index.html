@@ -145,19 +145,25 @@
           <div class="w-slot" data-weapon="2">3. RAYGUN</div>
           <div class="w-slot" data-weapon="3">4. SNIPER</div>
         </div>
-        <div class="comic-box ammo-box">
-          <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
-          <div class="ammo-readout">
-            <span id="hud-ammo-cur">6</span>
-            <span class="ammo-sep">/</span>
-            <span id="hud-ammo-res">∞</span>
+        <div class="bottom-right-boxes">
+          <div class="comic-box grenade-box" id="hud-grenade-box">
+            <div class="grenade-key">[G] 手雷</div>
+            <div class="grenade-count" id="hud-grenade-count">x1</div>
           </div>
-          <div class="reload-hint hidden" id="hud-reload-hint">RELOADING...</div>
+          <div class="comic-box ammo-box">
+            <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
+            <div class="ammo-readout">
+              <span id="hud-ammo-cur">6</span>
+              <span class="ammo-sep">/</span>
+              <span id="hud-ammo-res">∞</span>
+            </div>
+            <div class="reload-hint hidden" id="hud-reload-hint">RELOADING...</div>
+          </div>
         </div>
       </div>
 
       <div class="controls-strip">
-        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键射击 · 右键机瞄 · E/V 重拳 · R 换弹 · 1/2/3 切枪 · ESC 暂停
+        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键射击 · 右键机瞄 · G/Q 手雷 · E/V 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
       </div>
     </div>
 
@@ -173,7 +179,7 @@
       </div>
 
       <div class="aaa-footer">
-        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · E 重拳</span>
+        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · G 手雷 · E 重拳</span>
       </div>
 
       <nav class="aaa-menu" aria-label="主菜单">
@@ -197,8 +203,9 @@
               <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与移动平台</li>
               <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
               <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
+              <li><b>G / Q 键</b>：投掷破片手雷（首局 1 颗，每晋级一局 +2 颗）</li>
               <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
-              <li><b>1 / 2 / 3 或滚轮 / R</b>：切换 3D 武器与换弹</li>
+              <li><b>1–4 或滚轮 / R</b>：切换 3D 武器与换弹</li>
             </ul>
           </div>
           <div class="info-panel">
