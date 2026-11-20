@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { CELL_SIZE, COMIC_LEVELS } from "./levels.js";
+import { StreetScenery } from "./scenery.js";
 import { WeaponSystem3D } from "./weapons.js";
+
+const MAX_RENDER_PIXELS = 2_600_000;
+const SHADOW_INTERVAL_MS = 1000 / 30;
 
 export function createPlayer() {
   return {
@@ -45,10 +49,10 @@ export class ComicFPS3DEngine {
         antialias: true,
         powerPreference: "high-performance",
       });
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.shadowMap.enabled = true;
-      this.renderer.shadowMap.type = THREE.BasicShadowMap;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.renderer.shadowMap.autoUpdate = false;
     }
 
     // 场景与正确比例的透视相机
@@ -63,6 +67,7 @@ export class ComicFPS3DEngine {
 
     this.levelRoot = new THREE.Group();
     this.scene.add(this.levelRoot);
+    if (glCanvas) this.streetScenery = new StreetScenery(this.levelRoot, assets);
 
     this.raycaster = new THREE.Raycaster();
     this.levelIdx = 0;
@@ -121,20 +126,45 @@ export class ComicFPS3DEngine {
     const h = Math.max(1, window.innerHeight);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h, false);
-
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.fxCanvas.width = Math.floor(w * dpr);
-    this.fxCanvas.height = Math.floor(h * dpr);
-    this.fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const renderDpr = Math.min(dpr, Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / (w * h))));
+    this.renderer.setDrawingBufferSize(w, h, renderDpr);
+    this.fxCanvas.width = Math.floor(w * renderDpr);
+    this.fxCanvas.height = Math.floor(h * renderDpr);
+    this.fxCtx.setTransform(renderDpr, 0, 0, renderDpr, 0, 0);
     this.viewW = w;
     this.viewH = h;
+    this.viewportRevision = (this.viewportRevision || 0) + 1;
   }
 
-  _clearGroup(group) {
-    while (group.children.length > 0) {
-      group.remove(group.children[0]);
+  _clearLevel() {
+    if (this.renderer) {
+      const sharedGeometries = new Set([this.particleGeometry, ...Object.values(this.streetScenery.shapes)]);
+      const sharedMaterials = new Set([
+        this.assets.inkMaterial, this.assets.edgeMaterial, this.streetScenery.solidMaterial,
+        ...Object.values(this.assets.wallMaterials),
+      ]);
+      const geometries = new Set();
+      const materials = new Set();
+      const collect = (object) => {
+        object.shadow?.dispose();
+        if (object.isInstancedMesh) object.dispose();
+        if (object.geometry && !sharedGeometries.has(object.geometry)) geometries.add(object.geometry);
+        if (object.material) {
+          for (const material of [].concat(object.material)) {
+            if (!sharedMaterials.has(material)) materials.add(material);
+          }
+        }
+      };
+      this.levelRoot.traverse(collect);
+      // Consumed props are detached but still owned by the level.
+      for (const { mesh } of this.props) {
+        if (mesh && !mesh.parent) mesh.traverse(collect);
+      }
+      for (const geometry of geometries) geometry.dispose();
+      for (const material of materials) material.dispose();
     }
+    this.levelRoot.clear();
   }
 
   loadLevel(idx, keepStats = false, arena = false) {
@@ -147,7 +177,7 @@ export class ComicFPS3DEngine {
     this.mapH = this.map.length;
     this.mapW = this.map[0].length;
 
-    this._clearGroup(this.levelRoot);
+    this._clearLevel();
     this.enemies = [];
     this.props = [];
     this.movers = [];
@@ -157,55 +187,15 @@ export class ComicFPS3DEngine {
     this.projectileId = 0;
     this.grenades = [];
     this.grenadeId = 0;
-    this.grenadeAiming = false;
-    this.grenadeAimKey = null;
-    this.grenadeAimPhase = 0;
-    this.grenadeAimGroup = null;
-    this._grenadeAimParts = null;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
     this.popups = [];
     this.hitTargets = [];
 
-    // 天空与雾效（街区大图降低雾浓度，保证跨街区长视距清晰）
     const worldW = this.mapW * CELL_SIZE;
     const worldH = this.mapH * CELL_SIZE;
-    const maxSpan = Math.max(worldW, worldH);
-    const isLargeMap = Math.max(this.mapW, this.mapH) >= 20;
-    this.scene.background = new THREE.Color(lvl.skyColor);
-    this.scene.fog = new THREE.FogExp2(lvl.fogColor, isLargeMap ? 0.0085 : 0.014);
-
-    // 灯光（赛璐璐强方向光 + 半球补光）
-    const hemi = new THREE.HemisphereLight(lvl.ambientColor, 0x262038, 1.15);
-    this.levelRoot.add(hemi);
-
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.65);
-    dirLight.position.set(worldW * 0.5 + 24, 46, worldH * 0.5 + 18);
-    dirLight.target.position.set(worldW * 0.5, 0, worldH * 0.5);
-    this.levelRoot.add(dirLight.target);
-    dirLight.castShadow = true;
-    const shadowRes = isLargeMap ? 512 : 1024;
-    dirLight.shadow.mapSize.set(shadowRes, shadowRes);
-    dirLight.shadow.camera.near = 5;
-    dirLight.shadow.camera.far = Math.max(115, maxSpan * 1.85);
-    const d = Math.max(40, maxSpan * 0.65);
-    dirLight.shadow.camera.left = -d;
-    dirLight.shadow.camera.right = d;
-    dirLight.shadow.camera.top = d;
-    dirLight.shadow.camera.bottom = -d;
-    this.levelRoot.add(dirLight);
-
-    // 地面：使用 512×512 超采样高清柏油/地面贴图按每格 1:1 平铺，保证近距离路面颗粒与墨线锐利清晰
-    const floorTex = this.assets.textures[lvl.floorTex].clone();
-    floorTex.needsUpdate = true;
-    floorTex.repeat.set(this.mapW, this.mapH);
-    const floorMat = this.assets.toonMat({ map: floorTex });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(worldW / 2, 0, worldH / 2);
-    floor.receiveShadow = true;
-    this.levelRoot.add(floor);
+    if (this.renderer) this._buildLevelLightingAndFloor(lvl, worldW, worldH);
 
     // 构建街区 3D 微凸起人行道 + 路沿石 + 连通道路标线，以及合并后的独立街区建筑
     this.sidewalkGrid = null;
@@ -222,6 +212,7 @@ export class ComicFPS3DEngine {
 
     // 漫画城市天际线 & 大太阳背景
     if (this.renderer) this._buildComicSkyline(worldW, worldH, lvl);
+    this.streetScenery?.build();
 
     // 玩家出生点
     this.player.pos.set(lvl.playerStart.x * CELL_SIZE, 0, lvl.playerStart.z * CELL_SIZE);
@@ -262,6 +253,37 @@ export class ComicFPS3DEngine {
     this._syncCamera(0);
   }
 
+  _buildLevelLightingAndFloor(lvl, worldW, worldH) {
+    const maxSpan = Math.max(worldW, worldH);
+    this.scene.background = new THREE.Color(lvl.skyColor);
+    this.scene.fog = new THREE.FogExp2(lvl.fogColor, maxSpan >= CELL_SIZE * 20 ? 0.0085 : 0.014);
+
+    this.levelRoot.add(new THREE.HemisphereLight(lvl.ambientColor, 0x262038, 1.15));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.65);
+    sun.position.set(worldW / 2 + 24, 46, worldH / 2 + 18);
+    sun.target.position.set(worldW / 2, 0, worldH / 2);
+    sun.castShadow = true;
+    const d = Math.max(40, maxSpan * 0.65);
+    const shadow = sun.shadow;
+    shadow.mapSize.set(1024, 1024);
+    shadow.bias = -0.00008;
+    shadow.normalBias = 0.06;
+    Object.assign(shadow.camera, { near: 5, far: Math.max(115, maxSpan * 1.85), left: -d, right: d, top: d, bottom: -d });
+    shadow.camera.updateProjectionMatrix();
+    this.levelRoot.add(sun, sun.target);
+    this.renderer.shadowMap.needsUpdate = true;
+    this.nextShadowUpdate = 0;
+
+    // World-space tiling uses the same texture across chapters.
+    const geometry = new THREE.PlaneGeometry(worldW, worldH).rotateX(-Math.PI / 2);
+    const uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * this.mapW, uv.getY(i) * this.mapH);
+    const floor = new THREE.Mesh(geometry, this.assets.toonMat({ map: this.assets.textures[lvl.floorTex] }));
+    floor.position.set(worldW / 2, 0, worldH / 2);
+    floor.receiveShadow = true;
+    this.levelRoot.add(floor);
+  }
+
   _spawnMover(spec, id) {
     const baseX = spec.x * CELL_SIZE;
     const baseZ = spec.z * CELL_SIZE;
@@ -270,15 +292,18 @@ export class ComicFPS3DEngine {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(baseX, spec.h / 2, baseZ);
     mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.assets.addCreaseLines(mesh);
-    // 顶部添加漫画高对比装饰条（可踩踏平台带青色/金色边框）
-    const cap = new THREE.Mesh(
-      new THREE.BoxGeometry(spec.w * 0.84, 0.12, spec.d * 0.84),
-      this.assets.toonMat({ color: spec.rideable ? 0x181822 : 0xff2a44 })
-    );
-    cap.position.y = spec.h / 2 + 0.06;
-    mesh.add(cap);
+    // Keep cached world shadows off the moving surface.
+    mesh.receiveShadow = false;
+    if (this.renderer) {
+      // Use a solid silhouette instead of rasterizing a thin line on the box's depth.
+      this.assets.addOutline(mesh, 1.03);
+      const cap = new THREE.Mesh(
+        new THREE.BoxGeometry(spec.w * 0.84, 0.14, spec.d * 0.84),
+        this.assets.toonMat({ color: spec.rideable ? 0x181822 : 0xff2a44 })
+      );
+      cap.position.y = spec.h / 2 + 0.05;
+      mesh.add(cap);
+    }
     mesh.userData = { kind: "wall" };
     this.levelRoot.add(mesh);
     this.hitTargets.push(mesh);
@@ -487,7 +512,6 @@ export class ComicFPS3DEngine {
         const slab = new THREE.Mesh(slabGeo, sidewalkMat);
         slab.position.set(wx, sidewalkH / 2, wz);
         slab.receiveShadow = true;
-        this.assets.addCreaseLines(slab);
         this.levelRoot.add(slab);
       }
     }
@@ -495,7 +519,9 @@ export class ComicFPS3DEngine {
     // 3. 在所有「人行道与马路交界处」生成凸起的 3D 马路牙子路沿石 (高 0.20m，宽 0.24m)
     const curbH = 0.20;
     const curbW = 0.24;
-    const curbMat = this.assets.toonMat({ color: lvl.districtStyle === "chinatown" ? 0xd9a84e : 0xc8d0e0 });
+    // Let the road-facing face extend beyond the slab so the two vertical faces never coincide.
+    const curbInset = curbW * 0.5 - 0.045;
+    const curbColor = lvl.districtStyle === "chinatown" ? 0xd9a84e : 0xc8d0e0;
 
     // 水平方向路沿石合并
     for (let z = 1; z < H - 1; z++) {
@@ -506,14 +532,11 @@ export class ComicFPS3DEngine {
             let run = 1;
             while (x + run < W - 1 && sidewalkGrid[z][x + run] && roadGrid[z + dir]?.[x + run]) run++;
             const len = run * CELL_SIZE;
-            const curb = new THREE.Mesh(new THREE.BoxGeometry(len, curbH, curbW), curbMat);
-            curb.position.set(
+            this.streetScenery.addSolid("box", curbColor, [
               (x + run * 0.5) * CELL_SIZE,
               curbH / 2,
-              (z + 0.5 + dir * 0.5) * CELL_SIZE - dir * (curbW * 0.5)
-            );
-            this.assets.addCreaseLines(curb);
-            this.levelRoot.add(curb);
+              (z + 0.5 + dir * 0.5) * CELL_SIZE - dir * curbInset,
+            ], [len, curbH, curbW]);
             x += run;
           } else {
             x++;
@@ -531,14 +554,11 @@ export class ComicFPS3DEngine {
             let run = 1;
             while (z + run < H - 1 && sidewalkGrid[z + run][x] && roadGrid[z + run]?.[x + dir]) run++;
             const len = run * CELL_SIZE;
-            const curb = new THREE.Mesh(new THREE.BoxGeometry(curbW, curbH, len), curbMat);
-            curb.position.set(
-              (x + 0.5 + dir * 0.5) * CELL_SIZE - dir * (curbW * 0.5),
+            this.streetScenery.addSolid("box", curbColor, [
+              (x + 0.5 + dir * 0.5) * CELL_SIZE - dir * curbInset,
               curbH / 2,
-              (z + run * 0.5) * CELL_SIZE
-            );
-            this.assets.addCreaseLines(curb);
-            this.levelRoot.add(curb);
+              (z + run * 0.5) * CELL_SIZE,
+            ], [curbW, curbH, len]);
             z += run;
           } else {
             z++;
@@ -575,10 +595,12 @@ export class ComicFPS3DEngine {
       }
     }
 
-    const yellowMat = new THREE.MeshBasicMaterial({ color: 0xffe01b });
-    const whiteMat = new THREE.MeshBasicMaterial({ color: 0xf4f7ff });
-    const manholeMat = this.assets.toonMat({ color: 0x3b4154 });
-    const markY = 0.018;
+    // Paint is biased against the street surface instead of using nearly coplanar 3D boxes.
+    const paint = { polygonOffset: true, polygonOffsetFactor: -1 };
+    const yellowMat = new THREE.MeshBasicMaterial({ color: 0xffe01b, ...paint, polygonOffsetUnits: -2 });
+    const whiteMat = new THREE.MeshBasicMaterial({ color: 0xf4f7ff, ...paint, polygonOffsetUnits: -3 });
+    const scenery = this.streetScenery;
+    const stripe = (material, x, z, w, d) => scenery.add("paint", material, [x, 0, z], [w, 1, d]);
     const lineGap = 0.14;
     const lineW = 0.13;
 
@@ -589,41 +611,21 @@ export class ComicFPS3DEngine {
       if (len < 0.15) return;
       const mx = (x1 + x2) * 0.5;
       const mz = (z1 + z2) * 0.5;
-      if (Math.abs(dx) > Math.abs(dz)) {
-        // 东西向双黄线
-        [-lineGap, lineGap].forEach((oz) => {
-          const strip = new THREE.Mesh(new THREE.BoxGeometry(len, 0.016, lineW), yellowMat);
-          strip.position.set(mx, markY, mz + oz);
-          this.levelRoot.add(strip);
-        });
-      } else {
-        // 南北向双黄线
-        [-lineGap, lineGap].forEach((ox) => {
-          const strip = new THREE.Mesh(new THREE.BoxGeometry(lineW, 0.016, len), yellowMat);
-          strip.position.set(mx + ox, markY, mz);
-          this.levelRoot.add(strip);
-        });
+      const horizontal = Math.abs(dx) > Math.abs(dz);
+      for (const offset of [-lineGap, lineGap]) {
+        if (horizontal) stripe(yellowMat, mx, mz + offset, len, lineW);
+        else stripe(yellowMat, mx + offset, mz, lineW, len);
       }
     };
 
     const addCrosswalk = (cx, cz, verticalRoad) => {
-      // 在路口入口处绘制白色停止线与 6 条立体斑马线
+      // 路口入口处的斑马线
       const stripes = 6;
       const span = CELL_SIZE * 1.65;
       for (let i = 0; i < stripes; i++) {
         const offset = -span * 0.5 + (i + 0.5) * (span / stripes);
-        const bar = new THREE.Mesh(
-          verticalRoad
-            ? new THREE.BoxGeometry(0.45, 0.02, 2.2)
-            : new THREE.BoxGeometry(2.2, 0.02, 0.45),
-          whiteMat
-        );
-        bar.position.set(
-          verticalRoad ? cx + offset : cx,
-          markY + 0.002,
-          verticalRoad ? cz : cz + offset
-        );
-        this.levelRoot.add(bar);
+        if (verticalRoad) stripe(whiteMat, cx + offset, cz, 0.45, 2.2);
+        else stripe(whiteMat, cx, cz + offset, 2.2, 0.45);
       }
     };
 
@@ -637,21 +639,15 @@ export class ComicFPS3DEngine {
 
         // 丁字或十字路口中心：放置漫画铸铁井盖
         if (degA >= 3) {
-          const cover = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.03, 12), manholeMat);
-          cover.position.set(wx, markY, wz);
-          this.assets.addOutline(cover, 1.08);
-          this.levelRoot.add(cover);
+          scenery.addSolid("cylinder", 0x3b4154, [wx, 0.028, wz], [1.38, 0.055, 1.38]);
+          scenery.addSolid("cylinder", 0x5b667d, [wx, 0.062, wz], [1.14, 0.033, 1.14]);
         } else if (degA === 2) {
           // L型转弯中心点补齐双黄线转角连接块，确保 90 度弯道无缝衔接
           const hasH = isCenterNode(vx - 1, vz) || isCenterNode(vx + 1, vz);
           const hasV = isCenterNode(vx, vz - 1) || isCenterNode(vx, vz + 1);
           if (hasH && hasV) {
-            const cornerHub = new THREE.Mesh(
-              new THREE.BoxGeometry((lineGap + lineW) * 2.2, 0.017, (lineGap + lineW) * 2.2),
-              yellowMat
-            );
-            cornerHub.position.set(wx, markY, wz);
-            this.levelRoot.add(cornerHub);
+            const size = (lineGap + lineW) * 2.2;
+            stripe(yellowMat, wx, wz, size, size);
           }
         }
 
@@ -698,11 +694,9 @@ export class ComicFPS3DEngine {
   _buildLevelArchitecture(lvl) {
     const crateH = 1.65;
     const baseWallH = 4.8;
-    if (!this._sharedCrateGeo) {
-      this._sharedCrateGeo = new THREE.BoxGeometry(CELL_SIZE * 0.78, crateH, CELL_SIZE * 0.78);
-    }
-    const crateGeo = this._sharedCrateGeo;
+    const crateGeo = new THREE.BoxGeometry(CELL_SIZE * 0.78, crateH, CELL_SIZE * 0.78);
     const trimMat = this.assets.toonMat({ color: 0x16161e });
+    const vehicleCollisionMat = new THREE.MeshBasicMaterial({ visible: false });
 
     // 1. 先生成低矮掩体（6: 木箱掩体，10: 街头漫画出租车/警车/货车掩体）
     for (let z = 0; z < this.mapH; z++) {
@@ -723,18 +717,12 @@ export class ComicFPS3DEngine {
           this.hitTargets.push(box);
         } else if (cell === 10) {
           const vType = (x + z) % 3; // 0: 黄色漫画出租车  1: 红白复古快递货车  2: 蓝白漫画警车
-          const bodyColor = vType === 0 ? 0xffe01b : vType === 1 ? 0xff3b30 : 0x1e64d8;
-          const hitBox = new THREE.Mesh(crateGeo, this.assets.toonMat({ color: bodyColor }));
+          const hitBox = new THREE.Mesh(crateGeo, vehicleCollisionMat);
           hitBox.position.set(wx, baseElev + crateH / 2, wz);
-          hitBox.receiveShadow = true;
-          this.assets.addCreaseLines(hitBox);
           hitBox.userData = { kind: "wall" };
           this.levelRoot.add(hitBox);
           this.hitTargets.push(hitBox);
-
-          if (this.renderer) {
-            this._decorateComicStreetVehicle(hitBox, vType);
-          }
+          this.streetScenery?.addVehicle(vType, wx, baseElev, wz);
         }
       }
     }
@@ -865,6 +853,7 @@ export class ComicFPS3DEngine {
     const cornice = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.24, 0.34, bd + 0.24), trimMat);
     cornice.position.set(wx, bh + 0.17, wz);
     this.levelRoot.add(cornice);
+    this._addFacadeRelief(cell, gx, gz, wCells, dCells, bh);
 
     // 按建筑类型添加标志性立体屋顶与门头结构
     if (cell === 7) {
@@ -1105,72 +1094,46 @@ export class ComicFPS3DEngine {
   }
 
   // 街区 3 种漫画街头车辆造型（0: 黄色出租车  1: 红白快递货车  2: 蓝白警车，全部共享几何体零重复分配）
-  _decorateComicStreetVehicle(hitBox, vType) {
-    if (!this._vehicleGeos) {
-      const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.26, 10);
-      wheelGeo.rotateZ(Math.PI / 2);
-      this._vehicleGeos = {
-        sedanCabin: new THREE.BoxGeometry(1.9, 0.56, 1.82),
-        vanCabin: new THREE.BoxGeometry(2.35, 0.72, 2.25),
-        glass: new THREE.BoxGeometry(1.98, 0.36, 1.5),
-        sign: new THREE.BoxGeometry(0.68, 0.22, 0.32),
-        wheel: wheelGeo,
-      };
+  _addFacadeRelief(cell, gx, gz, wCells, dCells, height) {
+    const finish = { 1: 0xaa735c, 8: 0xc2885e, 11: 0xde9860, 13: 0xe4ceb0 }[cell];
+    if (!finish) return;
+    const scenery = this.streetScenery;
+    const sides = [
+      { x: gx, z: gz, dx: 1, dz: 0, nx: 0, nz: -1, length: wCells },
+      { x: gx, z: gz + dCells - 1, dx: 1, dz: 0, nx: 0, nz: 1, length: wCells },
+      { x: gx, z: gz, dx: 0, dz: 1, nx: -1, nz: 0, length: dCells },
+      { x: gx + wCells - 1, z: gz, dx: 0, dz: 1, nx: 1, nz: 0, length: dCells },
+    ];
+    for (const side of sides) {
+      const { dx, dz, nx, nz, length } = side;
+      for (let i = 0; i < length; i++) {
+        const x = side.x + i * dx;
+        const z = side.z + i * dz;
+        const adjacent = this.map[z + nz]?.[x + nx];
+        if (adjacent !== 0 && !this._isLowCoverCell(adjacent)) continue;
+        const faceX = (x + 0.5 + 0.5 * nx) * CELL_SIZE;
+        const faceZ = (z + 0.5 + 0.5 * nz) * CELL_SIZE;
+        const relief = (y, w, h, depth, lateral = 0) => {
+          const position = [faceX + dx * lateral + nx * depth * 0.46, y,
+            faceZ + dz * lateral + nz * depth * 0.46];
+          scenery.addSolid("box", finish, position, [dx ? w : depth, h, dz ? w : depth]);
+        };
+        // Stone lintels and sills sit proud of the inked façade.
+        relief(cell === 13 ? 3.48 : 2.62, 2.76, 0.14, 0.24);
+        relief(Math.min(6.8, height - 1.1), 2.42, 0.13, 0.21);
+        if (cell === 13) {
+          for (const offset of [-1.35, 1.35]) {
+            relief(1.79, 0.33, 2.99, 0.23, offset);
+            relief(0.31, 0.51, 0.28, 0.35, offset);
+            relief(3.29, 0.54, 0.23, 0.33, offset);
+          }
+        }
+      }
     }
-
-    const geos = this._vehicleGeos;
-    const cabinColor = vType === 0 ? 0xffc800 : vType === 1 ? 0xfff5d6 : 0xffffff;
-    const cabin = new THREE.Mesh(
-      vType === 1 ? geos.vanCabin : geos.sedanCabin,
-      this.assets.toonMat({ color: cabinColor })
-    );
-    cabin.position.y = vType === 1 ? 0.5 : 0.42;
-    this.assets.addCreaseLines(cabin);
-    hitBox.add(cabin);
-
-    const glass = new THREE.Mesh(geos.glass, this.assets.toonMat({ color: 0x00e5ff }));
-    glass.position.y = 0.44;
-    hitBox.add(glass);
-
-    // 车顶 TAXI 灯牌 / 警灯条
-    if (vType !== 1) {
-      const sign = new THREE.Mesh(
-        geos.sign,
-        this.assets.toonMat({ color: vType === 0 ? 0xff2a44 : 0x00e5ff })
-      );
-      sign.position.y = 0.82;
-      this.assets.addCreaseLines(sign);
-      hitBox.add(sign);
-    }
-
-    const wheelMat = this.assets.toonMat({ color: 0x14141c });
-    [
-      [-1.35, -0.45, -0.85],
-      [1.35, -0.45, -0.85],
-      [-1.35, -0.45, 0.85],
-      [1.35, -0.45, 0.85],
-    ].forEach(([ox, oy, oz]) => {
-      const w = new THREE.Mesh(geos.wheel, wheelMat);
-      w.position.set(ox, oy, oz);
-      hitBox.add(w);
-    });
   }
 
-  // 街区人行道旁的漫画路灯与红色消防栓点缀（共享几何体，零阴影开销）
+  // 街区人行道旁的漫画路灯与红色消防栓点缀。
   _buildStreetBlockFurniture() {
-    if (!this._furnitureGeos) {
-      this._furnitureGeos = {
-        pole: new THREE.CylinderGeometry(0.09, 0.12, 4.1, 8),
-        arm: new THREE.BoxGeometry(0.85, 0.1, 0.1),
-        bulb: new THREE.SphereGeometry(0.24, 8, 8),
-        hydrant: new THREE.CylinderGeometry(0.2, 0.24, 0.72, 8),
-      };
-    }
-    const fg = this._furnitureGeos;
-    const poleMat = this.assets.toonMat({ color: 0x1c202c });
-    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe01b });
-    const hydrantMat = this.assets.toonMat({ color: 0xff2a44 });
-
     for (let z = 2; z < this.mapH - 2; z += 4) {
       for (let x = 2; x < this.mapW - 2; x += 4) {
         if (this.map[z][x] !== 0) continue;
@@ -1178,25 +1141,11 @@ export class ComicFPS3DEngine {
         const southWall = this.map[z + 1]?.[x] > 0 && !this._isLowCoverCell(this.map[z + 1][x]);
         if (!northWall && !southWall) continue;
 
-        const wx = (x + 0.5) * CELL_SIZE + ((x + z) % 2 === 0 ? -1.45 : 1.45);
+        const lamp = (x + z) % 8 === 0;
+        const wx = (x + 0.5) * CELL_SIZE + (lamp ? -1.45 : 1.45);
         const wz = (z + 0.5) * CELL_SIZE + (northWall ? -1.55 : 1.55);
-
-        if ((x + z) % 2 === 0) {
-          const pole = new THREE.Mesh(fg.pole, poleMat);
-          pole.position.set(wx, 2.05, wz);
-          const arm = new THREE.Mesh(fg.arm, poleMat);
-          arm.position.set(0.35, 1.98, 0);
-          const bulb = new THREE.Mesh(fg.bulb, lampMat);
-          bulb.position.set(0.7, 1.85, 0);
-          this.assets.addOutline(bulb, 1.18);
-          pole.add(arm, bulb);
-          this.levelRoot.add(pole);
-        } else {
-          const hyd = new THREE.Mesh(fg.hydrant, hydrantMat);
-          hyd.position.set(wx, 0.36, wz);
-          this.assets.addOutline(hyd, 1.09);
-          this.levelRoot.add(hyd);
-        }
+        const ground = this.sidewalkGrid[z][x] ? 0.16 : 0;
+        this.streetScenery.addStreetFixture(lamp, wx, ground, wz);
       }
     }
   }
@@ -1498,17 +1447,20 @@ export class ComicFPS3DEngine {
   }
 
   _hasLineOfSight(fromPos, toPos) {
-    const dir = new THREE.Vector3().subVectors(toPos, fromPos);
-    const dist = dir.length();
-    dir.normalize();
-    const steps = Math.ceil(dist / 0.8);
+    const dx = toPos.x - fromPos.x;
+    const dy = toPos.y - fromPos.y;
+    const dz = toPos.z - fromPos.z;
+    const steps = Math.ceil(Math.hypot(dx, dy, dz) / 0.8);
     for (let i = 1; i < steps; i++) {
-      const p = fromPos.clone().addScaledVector(dir, (i / steps) * dist);
-      const c = this._cellAt(p.x, p.z);
+      const t = i / steps;
+      const x = fromPos.x + dx * t;
+      const y = fromPos.y + dy * t;
+      const z = fromPos.z + dz * t;
+      const c = this._cellAt(x, z);
       if (c > 0 && !this._isLowCoverCell(c)) return false;
-      if (this._isLowCoverCell(c) && p.y < 1.65) return false;
+      if (this._isLowCoverCell(c) && y < 1.65) return false;
       for (const m of this.movers) {
-        if (Math.abs(p.x - m.x) < m.w / 2 && Math.abs(p.z - m.z) < m.d / 2 && p.y < m.h) {
+        if (Math.abs(x - m.x) < m.w / 2 && Math.abs(z - m.z) < m.d / 2 && y < m.h) {
           return false;
         }
       }
@@ -2343,7 +2295,7 @@ export class ComicFPS3DEngine {
 
       if (g.fuse <= 0 || directHit) {
         this._detonateGrenade(g, players);
-        this.levelRoot.remove(g.mesh);
+        this._disposeGrenadeMesh(g.mesh);
         this.grenades.splice(i, 1);
       }
     }
@@ -2377,7 +2329,9 @@ export class ComicFPS3DEngine {
     for (const pr of this.props) {
       if (pr.active && pr.type === "barrel") {
         if (pr.mesh.position.distanceTo(pos) < radius * 0.85) {
-          setTimeout(() => this._explodeBarrel(pr), 90);
+          setTimeout(() => {
+            if (this.props.includes(pr)) this._explodeBarrel(pr);
+          }, 90);
         }
       }
     }
@@ -2888,6 +2842,15 @@ export class ComicFPS3DEngine {
     mesh.material.dispose();
   }
 
+  _disposeGrenadeMesh(mesh) {
+    mesh.removeFromParent();
+    // The outline children share their parent's geometry and the game's ink material.
+    for (const part of mesh.children) {
+      part.geometry.dispose();
+      part.material.dispose();
+    }
+  }
+
   _updateFX(dt) {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const tr = this.tracers[i];
@@ -2933,7 +2896,12 @@ export class ComicFPS3DEngine {
     }
   }
 
-  render() {
+  render(updateShadows = true) {
+    const now = performance.now();
+    if (updateShadows && now >= this.nextShadowUpdate) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.nextShadowUpdate = now + SHADOW_INTERVAL_MS;
+    }
     this.renderer.render(this.scene, this.camera);
     this._render2DOverlay();
   }
@@ -3079,25 +3047,34 @@ export class ComicFPS3DEngine {
   drawMinimap(miniCtx) {
     const w = miniCtx.canvas.width;
     const h = miniCtx.canvas.height;
-    miniCtx.clearRect(0, 0, w, h);
-    if (!this.mapW) return;
+    if (!this.mapW) {
+      miniCtx.clearRect(0, 0, w, h);
+      return;
+    }
 
     const cell = Math.min(w / this.mapW, h / this.mapH);
     const ox = (w - this.mapW * cell) / 2;
     const oy = (h - this.mapH * cell) / 2;
 
-    miniCtx.fillStyle = "#14141e";
-    miniCtx.fillRect(0, 0, w, h);
-
-    for (let z = 0; z < this.mapH; z++) {
-      for (let x = 0; x < this.mapW; x++) {
-        const c = this.map[z][x];
-        if (c > 0) {
-          miniCtx.fillStyle = c === 6 ? "#b87828" : c === 10 ? "#d4af26" : "#4b5878";
-          miniCtx.fillRect(ox + x * cell, oy + z * cell, cell, cell);
+    const background = this.minimapBackground ??= document.createElement("canvas");
+    if (this.minimapMap !== this.map || background.width !== w || background.height !== h) {
+      this.minimapMap = this.map;
+      background.width = w;
+      background.height = h;
+      const cached = background.getContext("2d");
+      cached.fillStyle = "#14141e";
+      cached.fillRect(0, 0, w, h);
+      for (let z = 0; z < this.mapH; z++) {
+        for (let x = 0; x < this.mapW; x++) {
+          const c = this.map[z][x];
+          if (c > 0) {
+            cached.fillStyle = c === 6 ? "#b87828" : c === 10 ? "#d4af26" : "#4b5878";
+            cached.fillRect(ox + x * cell, oy + z * cell, cell, cell);
+          }
         }
       }
     }
+    miniCtx.drawImage(background, 0, 0);
 
     // 移动方块与激活激光线
     for (const m of this.movers) {

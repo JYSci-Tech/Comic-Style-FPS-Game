@@ -21,7 +21,7 @@ export class LanView {
       root.removeFromParent();
     }
     for (const { mesh } of this.projectiles.values()) this.removeMesh(mesh);
-    for (const { mesh } of this.grenades.values()) mesh.removeFromParent();
+    for (const { mesh } of this.grenades.values()) this.engine._disposeGrenadeMesh(mesh);
     this.avatars.clear();
     this.projectiles.clear();
     this.grenades.clear();
@@ -187,7 +187,7 @@ export class LanView {
     }
     for (const [id, g] of this.grenades) {
       if (online.has(id)) continue;
-      g.mesh.removeFromParent();
+      this.engine._disposeGrenadeMesh(g.mesh);
       this.grenades.delete(id);
     }
   }
