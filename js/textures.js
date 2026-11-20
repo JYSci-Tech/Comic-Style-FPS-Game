@@ -1,5 +1,11 @@
 import * as THREE from "three";
 
+// A small mip bias suppresses distant hatch shimmer while keeping the nearby ink linework.
+const filteredMap = THREE.ShaderChunk.map_fragment.replace("texture2D( map, vMapUv )", "texture2D( map, vMapUv, 0.4 )");
+function filterComicMap(shader) {
+  shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", filteredMap);
+}
+
 // 美式漫画风 Three.js 赛璐璐材质、墨线描边与程序化高清贴图库
 export class ComicAssets {
   constructor() {
@@ -65,10 +71,12 @@ export class ComicAssets {
   }
 
   toonMat(opts = {}) {
-    return new THREE.MeshToonMaterial({
+    const material = new THREE.MeshToonMaterial({
       gradientMap: this.toonGradient,
       ...opts,
     });
+    if (opts.map?.generateMipmaps) material.onBeforeCompile = filterComicMap;
+    return material;
   }
 
   // 给 3D 网格添加反向法线厚黑墨线描边（Inverted Hull）
@@ -82,10 +90,9 @@ export class ComicAssets {
 
   // 给建筑/箱体添加锐利漫画硬棱角墨线（复用缓存的 EdgesGeometry，大幅降低大图 CPU/GPU 开销）
   addCreaseLines(mesh, threshold = 20) {
-    if (!mesh.geometry.userData.edgesGeo) {
-      mesh.geometry.userData.edgesGeo = new THREE.EdgesGeometry(mesh.geometry, threshold);
-    }
-    const lines = new THREE.LineSegments(mesh.geometry.userData.edgesGeo, this.edgeMaterial);
+    const edges = mesh.geometry.userData.edgeGeometries ??= new Map();
+    if (!edges.has(threshold)) edges.set(threshold, new THREE.EdgesGeometry(mesh.geometry, threshold));
+    const lines = new THREE.LineSegments(edges.get(threshold), this.edgeMaterial);
     lines.raycast = () => {};
     mesh.add(lines);
     return lines;
@@ -102,6 +109,8 @@ export class ComicAssets {
     drawFn(ctx, w, h);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
     tex.anisotropy = 8;
     if (repeat) {
       tex.wrapS = THREE.RepeatWrapping;
@@ -310,7 +319,7 @@ export class ComicAssets {
     // 高清美漫柏油碎石路面底纹（无零散断线黄斑，标线由连通道路几何体独立绘制）
     ctx.fillStyle = "#232532";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 0, s, s, "rgba(10,10,16,0.34)", 14, 2.3);
+    this._halftone(ctx, 0, 0, s, s, "rgba(10,10,16,0.22)", 16, 2.5);
 
     // 细微沥青骨料颗粒与漫风裂缝纹理
     ctx.fillStyle = "rgba(255,255,255,0.045)";
@@ -319,11 +328,10 @@ export class ComicAssets {
       const ry = ((i * 97) % (s - 12)) + 4;
       ctx.fillRect(rx, ry, 5, 5);
     }
-    ctx.strokeStyle = "rgba(12,13,20,0.65)";
+    ctx.strokeStyle = "rgba(12,13,20,0.4)";
     ctx.lineWidth = 3;
-    ctx.strokeRect(1.5, 1.5, s - 3, s - 3);
     ctx.beginPath();
-    ctx.moveTo(42, 0);
+    ctx.moveTo(42, 28);
     ctx.lineTo(54, 68);
     ctx.lineTo(36, 128);
     ctx.stroke();
