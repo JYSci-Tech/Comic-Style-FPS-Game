@@ -260,6 +260,7 @@ export class LanClient {
 
   clearMatch() {
     this.clearResultDelay();
+    element("game-shell")?.classList.remove("defeat-monochrome");
     if (this.match) {
       this.clearControls();
       this.view.clear();
@@ -284,12 +285,23 @@ export class LanClient {
     show(element("lan-home"), true);
 
     this.matchScreen.classList.remove("result-victory", "result-defeat");
+    const banner = element("lan-match-banner");
+    const shell = element("game-shell");
     if (!isPlaying) {
       const won =
         phase === "cleared" ||
         (phase === "finished" && (this.match.mode === "coop" || this.match.winner === this.id));
+      shell?.classList.toggle("defeat-monochrome", !won);
+      banner.className = `result-status-banner ${won ? "victory" : "defeat"}`;
+      if (phase === "cleared") banner.textContent = `★ ${this.engine.level.issue} 合作通关 · CLEARED! ★`;
+      else if (phase === "failed") banner.textContent = "✖ 挑战失败 · TEAM WIPED ✖";
+      else if (this.match.mode === "pvp") banner.textContent = won ? "★ 对局胜利 · VICTORY! ★" : "✖ 对局失败 · DEFEAT ✖";
+      else banner.textContent = "★ 全队通关 · VICTORY! ★";
       void this.matchScreen.offsetWidth;
       this.matchScreen.classList.add(won ? "result-victory" : "result-defeat");
+    } else {
+      shell?.classList.remove("defeat-monochrome");
+      show(banner, false);
     }
     const title = element("lan-match-title");
     const desc = element("lan-match-desc");

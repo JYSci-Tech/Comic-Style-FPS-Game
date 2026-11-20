@@ -128,6 +128,43 @@ export class ComicAudio {
     osc2.stop(t + 0.14);
   }
 
+  playSniper() {
+    if (!this._canPlay()) return;
+    const t = this.ctx.currentTime;
+
+    // 超音速重型狙击低频轰鸣
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(240, t);
+    osc.frequency.exponentialRampToValueAtTime(30, t + 0.32);
+    g.gain.setValueAtTime(0.62, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    osc.connect(g);
+    g.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.36);
+
+    // 高频爆裂枪声
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(900, t);
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0.55, t);
+    nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+    noise.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(this.ctx.destination);
+    noise.start(t);
+    noise.stop(t + 0.26);
+
+    // 延迟栓动拉栓声（chk-clack）
+    this._clickAt(t + 0.42, 680, 0.1);
+    this._clickAt(t + 0.56, 920, 0.11);
+  }
+
   playEnemyShot() {
     if (!this._canPlay()) return;
     const t = this.ctx.currentTime;

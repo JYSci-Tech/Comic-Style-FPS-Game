@@ -694,7 +694,7 @@ export class ComicFPS3DEngine {
   }
 
   handleMouseMove(dx, dy) {
-    const sens = this.weapons.isAds ? 0.0014 : 0.0022;
+    const sens = this.weapons.isScoped() ? 0.0007 : this.weapons.isAds ? 0.0014 : 0.0022;
     this.player.yaw -= dx * sens;
     this.player.pitch = Math.max(-1.35, Math.min(1.35, this.player.pitch - dy * sens));
   }
@@ -1393,9 +1393,15 @@ export class ComicFPS3DEngine {
         e.alerted = true;
         this.spawnPopup(eEye.clone().add(new THREE.Vector3(0, 0.8, 0)), e.taunt, "#ffffff", 0.9);
       }
-      if (!e.alerted) continue;
 
-      // 面向玩家
+      // 只有当主人公处于视线可见范围内时，NPC 才面向并向主人公方向移动与开火
+      if (!canSee) {
+        e.bodyParts.legL.rotation.x *= Math.max(0, 1 - dt * 10);
+        e.bodyParts.legR.rotation.x *= Math.max(0, 1 - dt * 10);
+        continue;
+      }
+
+      // 面向可见玩家
       e.root.rotation.y = Math.atan2(dx, dz);
 
       // 追击与左右横移
@@ -1413,24 +1419,32 @@ export class ComicFPS3DEngine {
         vx += nx * e.speed;
         vz += nz * e.speed;
       }
-      if (canSee && dist < 20) {
+      if (dist < 20) {
         vx += -nz * e.strafeDir * e.speed * 0.65;
         vz += nx * e.strafeDir * e.speed * 0.65;
       }
 
       const nextX = e.root.position.x + vx * dt;
       const nextZ = e.root.position.z + vz * dt;
+      const prevX = e.root.position.x;
+      const prevZ = e.root.position.z;
       if (!this._isBlocked(nextX, e.root.position.z, 0, 0.65)) e.root.position.x = nextX;
       if (!this._isBlocked(e.root.position.x, nextZ, 0, 0.65)) e.root.position.z = nextZ;
 
-      // 奔跑摆腿动画
-      e.animPhase += dt * 9;
-      const swing = Math.sin(e.animPhase) * 0.45;
-      e.bodyParts.legL.rotation.x = swing;
-      e.bodyParts.legR.rotation.x = -swing;
+      // 仅在实际位移时播放奔跑摆腿动画，避免原地踏步
+      const moved = Math.hypot(e.root.position.x - prevX, e.root.position.z - prevZ) > 0.002;
+      if (moved) {
+        e.animPhase += dt * 9;
+        const swing = Math.sin(e.animPhase) * 0.45;
+        e.bodyParts.legL.rotation.x = swing;
+        e.bodyParts.legR.rotation.x = -swing;
+      } else {
+        e.bodyParts.legL.rotation.x *= Math.max(0, 1 - dt * 10);
+        e.bodyParts.legR.rotation.x *= Math.max(0, 1 - dt * 10);
+      }
 
       // 发射可见 3D 漫画弹幕
-      if (canSee && dist < e.range) {
+      if (dist < e.range) {
         e.attackCooldown -= dt;
         if (e.attackCooldown <= 0) {
           e.attackCooldown = e.fireRate * (0.85 + Math.random() * 0.35);

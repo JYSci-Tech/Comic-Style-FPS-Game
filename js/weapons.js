@@ -73,13 +73,39 @@ export class WeaponSystem3D {
         hipPos: new THREE.Vector3(0.28, -0.25, -0.48),
         adsPos: new THREE.Vector3(0.0, -0.165, -0.4),
         adsFov: 56,
+        desc: "高速全自动能量连射，中近距火力压制",
+      },
+      {
+        id: "sniper",
+        name: "DEADEYE .50",
+        magSize: 4,
+        ammo: 4,
+        reserve: 16,
+        maxReserve: 24,
+        damage: 95,
+        headshotMult: 2.5,
+        pellets: 1,
+        spread: 0.016,
+        adsSpread: 0.0004,
+        fireRate: 1.05,
+        reloadTime: 1.45,
+        auto: false,
+        recoilKick: 1.55,
+        soundWord: "KRAK!",
+        tracerColor: 0x38e54d,
+        hipPos: new THREE.Vector3(0.3, -0.26, -0.5),
+        adsPos: new THREE.Vector3(0.0, -0.145, -0.34),
+        adsFov: 26,
+        desc: "高倍瞄准镜栓动狙击，爆头一枪秒杀重装",
       },
     ];
+
+    this.unlocked = [true, true, true, true];
 
     if (camera) {
       this.root = new THREE.Group();
       this.camera.add(this.root);
-      this.models = [this._buildMagnum(), this._buildShotgun(), this._buildRaygun()];
+      this.models = [this._buildMagnum(), this._buildShotgun(), this._buildRaygun(), this._buildSniper()];
       this.models.forEach((m) => this.root.add(m.group));
       this.punchFist = this._buildPunchFist();
       this.camera.add(this.punchFist);
@@ -523,6 +549,105 @@ export class WeaponSystem3D {
     return { group, muzzle, core: coreGroup, coreBall };
   }
 
+  _buildSniper() {
+    const group = new THREE.Group();
+
+    // 超长精密重型枪管 + 镂空制退器
+    const barrel = this._part(new THREE.CylinderGeometry(0.02, 0.026, 0.72, 10), 0x37474f, 0, 1.055);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.056, -0.34);
+    group.add(barrel);
+
+    // 枪口方形重型制退器（Muzzle Brake）
+    const brake = this._part(new THREE.BoxGeometry(0.068, 0.048, 0.1), 0x222831, 0, 1.06, true);
+    brake.position.set(0, 0.056, -0.71);
+    const brakeAccent = this._part(new THREE.BoxGeometry(0.074, 0.016, 0.06), 0xffe01b, 0, 1.04);
+    brakeAccent.position.set(0, 0.056, -0.71);
+    group.add(brake, brakeAccent);
+
+    // 前护木（战术绿 + 黄色漫画线条 + 折叠两脚架）
+    const handguard = this._part(new THREE.BoxGeometry(0.074, 0.074, 0.34), 0x246b42, 0, 1.05, true);
+    handguard.position.set(0, 0.032, -0.2);
+    const stripe = this._part(new THREE.BoxGeometry(0.08, 0.018, 0.28), 0xffe01b, 0, 1.04);
+    stripe.position.set(0, 0.036, -0.2);
+    group.add(handguard, stripe);
+
+    [-0.045, 0.045].forEach((bx) => {
+      const leg = this._part(new THREE.CylinderGeometry(0.009, 0.009, 0.2, 6), 0x263238, 0, 1.08);
+      leg.rotation.x = Math.PI / 2.2;
+      leg.position.set(bx, -0.012, -0.3);
+      group.add(leg);
+    });
+
+    // 重型精密机匣 + 顶部导轨
+    const receiver = this._part(new THREE.BoxGeometry(0.082, 0.092, 0.28), 0x1e262e, 0, 1.05, true);
+    receiver.position.set(0, 0.036, 0.07);
+    const rail = this._part(new THREE.BoxGeometry(0.044, 0.018, 0.28), 0x546e7a, 0, 1.06);
+    rail.position.set(0, 0.088, 0.05);
+    group.add(receiver, rail);
+
+    // 可动拉机柄（栓动击发后拉栓上膛）
+    const boltGroup = new THREE.Group();
+    boltGroup.position.set(0.048, 0.052, 0.11);
+    const boltStem = this._part(new THREE.CylinderGeometry(0.008, 0.008, 0.055, 6), 0xcfd8dc, 0, 1.08);
+    boltStem.rotation.z = Math.PI / 2;
+    boltStem.position.x = 0.025;
+    const boltKnob = this._part(new THREE.SphereGeometry(0.018, 8, 8), 0xffe01b, 0, 1.08);
+    boltKnob.position.x = 0.055;
+    boltGroup.add(boltStem, boltKnob);
+    group.add(boltGroup);
+
+    // 高倍率漫画狙击瞄准镜（镜筒 + 双镜环 + 调节旋钮 + 翠绿发光物镜）
+    const scopeTube = this._part(new THREE.CylinderGeometry(0.028, 0.024, 0.34, 12), 0x1a1e26, 0, 1.055);
+    scopeTube.rotation.x = Math.PI / 2;
+    scopeTube.position.set(0, 0.145, 0.02);
+    const scopeBell = this._part(new THREE.CylinderGeometry(0.04, 0.028, 0.09, 12), 0x263238, 0, 1.055);
+    scopeBell.rotation.x = Math.PI / 2;
+    scopeBell.position.set(0, 0.145, -0.17);
+    const lens = new THREE.Mesh(
+      new THREE.CircleGeometry(0.032, 12),
+      new THREE.MeshBasicMaterial({ color: 0x38e54d })
+    );
+    lens.position.set(0, 0.145, 0.192);
+    const turret = this._part(new THREE.CylinderGeometry(0.014, 0.014, 0.024, 8), 0xffe01b, 0, 1.08);
+    turret.position.set(0, 0.18, 0.02);
+    group.add(scopeTube, scopeBell, lens, turret);
+
+    [-0.04, 0.08].forEach((rz) => {
+      const mount = this._part(new THREE.BoxGeometry(0.052, 0.052, 0.024), 0xffe01b, 0, 1.06);
+      mount.position.set(0, 0.115, rz);
+      group.add(mount);
+    });
+
+    // 可拆卸重型直弹匣（换弹时向下拔出并拍回）
+    const mag = this._part(new THREE.BoxGeometry(0.052, 0.14, 0.105), 0x2c3540, 0, 1.05, true);
+    mag.position.set(0, -0.068, 0.01);
+    mag.rotation.x = -0.12;
+    const magBase = this._part(new THREE.BoxGeometry(0.06, 0.022, 0.112), 0xffe01b, 0, 1.05);
+    magBase.position.set(0, -0.072, 0);
+    mag.add(magBase);
+    group.add(mag);
+
+    // 战术枪托 + 贴腮垫 + 握把
+    const stock = this._part(new THREE.BoxGeometry(0.072, 0.12, 0.28), 0x246b42, 0, 1.05, true);
+    stock.position.set(0, 0.0, 0.3);
+    const cheek = this._part(new THREE.BoxGeometry(0.078, 0.038, 0.14), 0x1a1e26, 0, 1.05);
+    cheek.position.set(0, 0.072, 0.28);
+    const grip = this._part(new THREE.BoxGeometry(0.064, 0.15, 0.078), 0x1e242c, 0, 1.05);
+    grip.position.set(0, -0.082, 0.16);
+    grip.rotation.x = 0.28;
+    group.add(stock, cheek, grip);
+
+    group.add(this._buildGlovedHand(0.008, -0.095, 0.17));
+
+    const muzzle = this._makeMuzzleStar(0x38e54d);
+    muzzle.scale.setScalar(1.35);
+    muzzle.position.set(0, 0.056, -0.78);
+    group.add(muzzle);
+
+    return { group, muzzle, bolt: boltGroup, mag };
+  }
+
   _buildPunchFist() {
     const g = new THREE.Group();
     // 英雄赤红漫画拳套主体
@@ -557,17 +682,44 @@ export class WeaponSystem3D {
 
   _syncVisibility() {
     if (!this.models) return;
+    const hideForScope = this.current?.id === "sniper" && this.adsAmount > 0.72 && !this.reloading;
     this.models.forEach((m, idx) => {
-      m.group.visible = idx === this.currentIdx;
+      m.group.visible = idx === this.currentIdx && !hideForScope;
     });
   }
 
-  resetAll() {
+  isScoped() {
+    return this.current?.id === "sniper" && this.adsAmount > 0.72 && !this.reloading;
+  }
+
+  isUnlocked(idx) {
+    return Boolean(this.unlocked[idx]);
+  }
+
+  setUnlocked(flags) {
+    this.unlocked = this.weapons.map((_, i) => Boolean(flags[i]));
+    if (!this.unlocked[0]) this.unlocked[0] = true;
+    if (!this.isUnlocked(this.currentIdx)) {
+      this.currentIdx = 0;
+      this._syncVisibility();
+    }
+  }
+
+  unlock(idx) {
+    if (idx >= 0 && idx < this.weapons.length) {
+      this.unlocked[idx] = true;
+    }
+  }
+
+  resetAll(keepUnlocks = false) {
     this.weapons[0].ammo = 6;
     this.weapons[1].ammo = 6;
     this.weapons[1].reserve = 24;
     this.weapons[2].ammo = 24;
     this.weapons[2].reserve = 72;
+    this.weapons[3].ammo = 4;
+    this.weapons[3].reserve = 16;
+    if (!keepUnlocks) this.unlocked = [true, true, true, true];
     this.currentIdx = 0;
     this.reloading = false;
     this.reloadTimer = 0;
@@ -584,10 +736,11 @@ export class WeaponSystem3D {
   addAmmo() {
     this.weapons[1].reserve = Math.min(this.weapons[1].maxReserve, this.weapons[1].reserve + 12);
     this.weapons[2].reserve = Math.min(this.weapons[2].maxReserve, this.weapons[2].reserve + 36);
+    this.weapons[3].reserve = Math.min(this.weapons[3].maxReserve, this.weapons[3].reserve + 8);
   }
 
   select(idx) {
-    if (idx < 0 || idx >= this.weapons.length || idx === this.currentIdx) return;
+    if (idx < 0 || idx >= this.weapons.length || idx === this.currentIdx || !this.isUnlocked(idx)) return;
     this.currentIdx = idx;
     this.autoReloadTimer = 0;
     this.reloading = false;
@@ -598,7 +751,14 @@ export class WeaponSystem3D {
   }
 
   cycle(dir) {
-    this.select((this.currentIdx + dir + this.weapons.length) % this.weapons.length);
+    const n = this.weapons.length;
+    for (let step = 1; step <= n; step++) {
+      const candidate = (this.currentIdx + dir * step + n * 4) % n;
+      if (this.isUnlocked(candidate)) {
+        this.select(candidate);
+        return;
+      }
+    }
   }
 
   startReload() {
@@ -640,6 +800,7 @@ export class WeaponSystem3D {
 
     if (w.id === "magnum") this.audio.playMagnum();
     else if (w.id === "shotgun") this.audio.playShotgun();
+    else if (w.id === "sniper") this.audio.playSniper();
     else this.audio.playRaygun();
 
     if (w.ammo === 0 && w.reserve > 0) {
@@ -770,6 +931,29 @@ export class WeaponSystem3D {
             m.pump.position.z = -0.2 + rack;
           }
         }
+      } else if (w.id === "sniper") {
+        // 栓动狙击枪换弹：微侧枪身 -> 拔下重型直弹匣 -> 拍回新弹匣 -> 拉动枪栓上膛
+        if (p < 0.72) {
+          const mp = p / 0.72;
+          const drop = Math.sin(mp * Math.PI);
+          reloadPosY = -0.05 * drop;
+          reloadRotX = 0.22 * drop;
+          reloadRotZ = 0.42 * drop;
+          if (m.mag) m.mag.position.y = -0.068 - drop * 0.2;
+          if (m.bolt) {
+            m.bolt.position.z = 0.11;
+            m.bolt.rotation.z = 0;
+          }
+        } else {
+          const bp = (p - 0.72) / 0.28;
+          const rack = Math.sin(bp * Math.PI);
+          reloadRotX = 0.14 * rack;
+          if (m.mag) m.mag.position.y = -0.068;
+          if (m.bolt) {
+            m.bolt.position.z = 0.11 + rack * 0.085;
+            m.bolt.rotation.z = rack * 0.75;
+          }
+        }
       } else {
         // 射线枪倾斜弹出能量电池核心再拍回
         reloadPosY = -0.08 * arc + snap * 0.035;
@@ -786,6 +970,15 @@ export class WeaponSystem3D {
       // 非换弹状态平滑复位可动部件
       if (m.cylinder) m.cylinder.position.x += (0 - m.cylinder.position.x) * Math.min(1, dt * 16);
       if (m.reloadShell) m.reloadShell.visible = false;
+      if (m.mag) m.mag.position.y += (-0.068 - m.mag.position.y) * Math.min(1, dt * 18);
+      if (m.bolt) {
+        // 狙击枪开火后自动拉栓动作
+        const boltRack = w.id === "sniper" && this.cooldown > 0.22 && this.cooldown < 0.72
+          ? Math.sin(((this.cooldown - 0.22) / 0.5) * Math.PI)
+          : 0;
+        m.bolt.position.z += (0.11 + boltRack * 0.085 - m.bolt.position.z) * Math.min(1, dt * 22);
+        m.bolt.rotation.z += (boltRack * 0.75 - m.bolt.rotation.z) * Math.min(1, dt * 22);
+      }
       if (m.pump) {
         // 霰弹枪开火后半段自动拉栓动作
         const pumpRack = w.id === "shotgun" && this.cooldown > 0.08 && this.cooldown < 0.38
@@ -810,6 +1003,9 @@ export class WeaponSystem3D {
       reloadRotY,
       reloadRotZ
     );
+
+    // 开镜时隐藏狙击枪 3D 模型，让 2D 高倍狙击镜画面干净呈现
+    this._syncVisibility();
 
     // 枪口闪光、左轮弹巢/击锤与射线枪晶核旋转
     m.muzzle.visible = this.muzzleFlash > 0;
