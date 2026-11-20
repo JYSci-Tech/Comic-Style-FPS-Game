@@ -11,16 +11,25 @@ export class ComicAssets {
     this.edgeMaterial = new THREE.LineBasicMaterial({ color: 0x0e0e14 });
 
     this.textures = {
-      brick: this._makeCanvasTex(256, 256, (ctx) => this._drawBrick(ctx, 256)),
-      neon: this._makeCanvasTex(256, 256, (ctx) => this._drawNeonStore(ctx, 256)),
-      hazard: this._makeCanvasTex(256, 256, (ctx) => this._drawHazardSteel(ctx, 256)),
-      poster: this._makeCanvasTex(256, 256, (ctx) => this._drawWantedPoster(ctx, 256)),
-      lab: this._makeCanvasTex(256, 256, (ctx) => this._drawVillainLab(ctx, 256)),
-      crate: this._makeCanvasTex(256, 256, (ctx) => this._drawCrate(ctx, 256)),
+      brick: this._makeCanvasTex(256, 256, (ctx) => this._drawBrick(ctx, 256), true),
+      neon: this._makeCanvasTex(256, 256, (ctx) => this._drawNeonStore(ctx, 256), true),
+      hazard: this._makeCanvasTex(256, 256, (ctx) => this._drawHazardSteel(ctx, 256), true),
+      poster: this._makeCanvasTex(256, 256, (ctx) => this._drawWantedPoster(ctx, 256), true),
+      lab: this._makeCanvasTex(256, 256, (ctx) => this._drawVillainLab(ctx, 256), true),
+      crate: this._makeCanvasTex(256, 256, (ctx) => this._drawCrate(ctx, 256), true),
       asphalt: this._makeCanvasTex(256, 256, (ctx) => this._drawFloorAsphalt(ctx, 256), true),
+      streetFloor: this._makeCanvasTex(256, 256, (ctx) => this._drawFloorStreetBlock(ctx, 256), true),
+      sidewalk: this._makeCanvasTex(256, 256, (ctx) => this._drawSidewalkTile(ctx, 256), true),
       factoryFloor: this._makeCanvasTex(256, 256, (ctx) => this._drawFloorFactory(ctx, 256), true),
       labFloor: this._makeCanvasTex(256, 256, (ctx) => this._drawFloorLab(ctx, 256), true),
       barrel: this._makeCanvasTex(256, 256, (ctx) => this._drawBarrel(ctx, 256)),
+      comicShop: this._makeCanvasTex(256, 256, (ctx) => this._drawComicShop(ctx, 256), true),
+      apartment: this._makeCanvasTex(256, 256, (ctx) => this._drawApartmentFacade(ctx, 256), true),
+      graffiti: this._makeCanvasTex(256, 256, (ctx) => this._drawStreetGraffiti(ctx, 256), true),
+      viaduct: this._makeCanvasTex(256, 256, (ctx) => this._drawViaductWall(ctx, 256), true),
+      chinatown: this._makeCanvasTex(256, 256, (ctx) => this._drawChinatownFacade(ctx, 256), true),
+      container: this._makeCanvasTex(256, 256, (ctx) => this._drawHarborContainerFacade(ctx, 256), true),
+      marbleBank: this._makeCanvasTex(256, 256, (ctx) => this._drawMarbleBankFacade(ctx, 256), true),
     };
 
     this.wallMaterials = {
@@ -30,6 +39,14 @@ export class ComicAssets {
       4: this.toonMat({ map: this.textures.poster }),
       5: this.toonMat({ map: this.textures.lab }),
       6: this.toonMat({ map: this.textures.crate }),
+      7: this.toonMat({ map: this.textures.comicShop }),
+      8: this.toonMat({ map: this.textures.apartment }),
+      9: this.toonMat({ map: this.textures.graffiti }),
+      11: this.toonMat({ map: this.textures.chinatown }),
+      12: this.toonMat({ map: this.textures.container }),
+      13: this.toonMat({ map: this.textures.marbleBank }),
+      viaduct: this.toonMat({ map: this.textures.viaduct }),
+      sidewalk: this.toonMat({ map: this.textures.sidewalk }),
     };
   }
 
@@ -63,24 +80,29 @@ export class ComicAssets {
     return outline;
   }
 
-  // 给建筑/箱体添加锐利漫画硬棱角墨线
+  // 给建筑/箱体添加锐利漫画硬棱角墨线（复用缓存的 EdgesGeometry，大幅降低大图 CPU/GPU 开销）
   addCreaseLines(mesh, threshold = 20) {
-    const edges = new THREE.EdgesGeometry(mesh.geometry, threshold);
-    const lines = new THREE.LineSegments(edges, this.edgeMaterial);
+    if (!mesh.geometry.userData.edgesGeo) {
+      mesh.geometry.userData.edgesGeo = new THREE.EdgesGeometry(mesh.geometry, threshold);
+    }
+    const lines = new THREE.LineSegments(mesh.geometry.userData.edgesGeo, this.edgeMaterial);
     lines.raycast = () => {};
     mesh.add(lines);
     return lines;
   }
 
   _makeCanvasTex(w, h, drawFn, repeat = false) {
+    // 使用 2x 超采样 (512×512) 矢量渲染 + 8x 各向异性过滤，确保近距离观察路面与边墙依然锐利清晰
+    const scale = 2;
     const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
+    c.width = w * scale;
+    c.height = h * scale;
     const ctx = c.getContext("2d");
+    ctx.scale(scale, scale);
     drawFn(ctx, w, h);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
+    tex.anisotropy = 8;
     if (repeat) {
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;
@@ -285,15 +307,603 @@ export class ComicAssets {
   }
 
   _drawFloorAsphalt(ctx, s) {
-    ctx.fillStyle = "#2b2c3a";
+    // 高清美漫柏油碎石路面底纹（无零散断线黄斑，标线由连通道路几何体独立绘制）
+    ctx.fillStyle = "#232532";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 0, s, s, "rgba(0,0,0,0.25)", 16, 2.5);
-    ctx.strokeStyle = "#181822";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, s - 4, s - 4);
-    // 偶尔的路面黄漆标线感
-    ctx.fillStyle = "rgba(255, 224, 27, 0.25)";
-    ctx.fillRect(118, 24, 20, 76);
+    this._halftone(ctx, 0, 0, s, s, "rgba(10,10,16,0.34)", 14, 2.3);
+
+    // 细微沥青骨料颗粒与漫风裂缝纹理
+    ctx.fillStyle = "rgba(255,255,255,0.045)";
+    for (let i = 0; i < 36; i++) {
+      const rx = ((i * 53) % (s - 12)) + 4;
+      const ry = ((i * 97) % (s - 12)) + 4;
+      ctx.fillRect(rx, ry, 5, 5);
+    }
+    ctx.strokeStyle = "rgba(12,13,20,0.65)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(1.5, 1.5, s - 3, s - 3);
+    ctx.beginPath();
+    ctx.moveTo(42, 0);
+    ctx.lineTo(54, 68);
+    ctx.lineTo(36, 128);
+    ctx.stroke();
+  }
+
+  _drawFloorStreetBlock(ctx, s) {
+    this._drawFloorAsphalt(ctx, s);
+  }
+
+  _drawSidewalkTile(ctx, s) {
+    // 高清美漫水泥人行道步砖（2×2 大方砖 + 倒角高光 + 粗黑墨线接缝 + 路沿石质感）
+    ctx.fillStyle = "#8a92a8";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, 0, s, s, "rgba(16,18,28,0.16)", 16, 2.2);
+
+    const half = s / 2;
+    for (let gz = 0; gz < 2; gz++) {
+      for (let gx = 0; gx < 2; gx++) {
+        const x0 = gx * half;
+        const y0 = gz * half;
+        ctx.fillStyle = (gx + gz) % 2 === 0 ? "#959db4" : "#868ea4";
+        ctx.fillRect(x0 + 6, y0 + 6, half - 12, half - 12);
+        // 漫画高光边
+        ctx.fillStyle = "rgba(255,255,255,0.32)";
+        ctx.fillRect(x0 + 8, y0 + 8, half - 20, 6);
+        ctx.fillRect(x0 + 8, y0 + 8, 6, half - 20);
+        // 墨线砖缝
+        ctx.strokeStyle = "#181a24";
+        ctx.lineWidth = 5;
+        ctx.strokeRect(x0 + 3, y0 + 3, half - 6, half - 6);
+      }
+    }
+  }
+
+  _drawComicShop(ctx, s) {
+    // 美式漫画街角商店 / 复古快餐店外墙（红黄遮阳篷 + COMICS! 招牌 + 橱窗海报）
+    ctx.fillStyle = "#1d2747";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, 0, s, s, "rgba(255,224,27,0.12)", 14, 3);
+
+    // 顶部招牌灯箱
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(16, 14, s - 32, 46);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 7;
+    ctx.strokeRect(16, 14, s - 32, 46);
+    ctx.fillStyle = "#ff2a44";
+    ctx.font = "900 30px Impact, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("COMICS & DINER", s / 2, 48);
+
+    // 红白条纹漫画遮阳篷
+    const stripes = 8;
+    const sw = (s - 24) / stripes;
+    for (let i = 0; i < stripes; i++) {
+      ctx.fillStyle = i % 2 === 0 ? "#ff2a44" : "#fff5d6";
+      ctx.fillRect(12 + i * sw, 68, sw, 34);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(12 + i * sw, 68, sw, 34);
+    }
+
+    // 亮青色大橱窗 + 漫画海报陈列
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(22, 112, s - 44, 104);
+    ctx.fillStyle = "#ff2ebd";
+    ctx.fillRect(36, 128, 52, 72);
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(102, 128, 52, 72);
+    ctx.fillStyle = "#38e54d";
+    ctx.fillRect(168, 128, 52, 72);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(36, 128, 52, 72);
+    ctx.strokeRect(102, 128, 52, 72);
+    ctx.strokeRect(168, 128, 52, 72);
+    ctx.strokeRect(22, 112, s - 44, 104);
+
+    // 底部踢脚墙
+    ctx.fillStyle = "#c94136";
+    ctx.fillRect(0, 222, s, 34);
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, s - 8, s - 8);
+  }
+
+  _drawApartmentFacade(ctx, s) {
+    // 纽约/美漫街区装饰艺术公寓楼立面（暖黄褐砖墙 + 双联漫画窗 + 防火梯剪影）
+    ctx.fillStyle = "#d4882a";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, s * 0.45, s, s * 0.55, "rgba(14,14,20,0.22)", 12, 3);
+
+    // 横向石材腰线
+    ctx.fillStyle = "#f7b733";
+    ctx.fillRect(0, 16, s, 18);
+    ctx.fillRect(0, 124, s, 14);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(0, 16, s, 18);
+    ctx.strokeRect(0, 124, s, 14);
+
+    // 4 扇漫画高对比公寓窗户
+    const winPositions = [
+      [28, 44], [144, 44],
+      [28, 148], [144, 148],
+    ];
+    winPositions.forEach(([wx, wy], idx) => {
+      ctx.fillStyle = idx % 2 === 0 ? "#ffe01b" : "#00e5ff";
+      ctx.fillRect(wx, wy, 84, 68);
+      ctx.fillStyle = "rgba(255,255,255,0.65)";
+      ctx.fillRect(wx + 8, wy + 8, 22, 52);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 7;
+      ctx.strokeRect(wx, wy, 84, 68);
+      // 十字窗框
+      ctx.beginPath();
+      ctx.moveTo(wx + 42, wy);
+      ctx.lineTo(wx + 42, wy + 68);
+      ctx.moveTo(wx, wy + 34);
+      ctx.lineTo(wx + 84, wy + 34);
+      ctx.stroke();
+    });
+
+    // 黑色铸铁防火梯斜线剪影
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(22, 114);
+    ctx.lineTo(234, 114);
+    ctx.moveTo(64, 114);
+    ctx.lineTo(188, 228);
+    ctx.stroke();
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, s - 8, s - 8);
+  }
+
+  _drawStreetGraffiti(ctx, s) {
+    // 街头波普涂鸦红砖墙（INK CITY! 爆炸星标涂鸦）
+    this._drawBrick(ctx, s);
+
+    // 漫画爆炸底纹
+    ctx.save();
+    ctx.translate(s / 2, s / 2 + 6);
+    ctx.fillStyle = "#00e5ff";
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    const pts = 12;
+    for (let i = 0; i < pts * 2; i++) {
+      const a = (i / (pts * 2)) * Math.PI * 2;
+      const r = i % 2 === 0 ? 104 : 66;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * (r * 0.78);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 波普字样
+    ctx.rotate(-0.08);
+    ctx.font = "900 40px Impact, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = "#101016";
+    ctx.strokeText("INK CITY!", 0, -10);
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillText("INK CITY!", 0, -10);
+
+    ctx.font = "900 26px Impact, sans-serif";
+    ctx.strokeText("BLOCK WAR", 0, 26);
+    ctx.fillStyle = "#ff2ebd";
+    ctx.fillText("BLOCK WAR", 0, 26);
+    ctx.restore();
+  }
+
+  _drawViaductWall(ctx, s) {
+    // 城市街区高清边墙 / 市政护栏墙（按每 4m 单元平铺：混凝土壁柱 + 浮雕嵌板 + 顶部铸铁栏杆 + 警示路沿）
+    ctx.fillStyle = "#5c647a";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, 72, s, s - 72, "rgba(10,12,20,0.22)", 12, 2.5);
+
+    // 顶部深色铁艺栏杆带与城市天际透光格
+    ctx.fillStyle = "#1e2230";
+    ctx.fillRect(0, 0, s, 68);
+    for (let x = 14; x < s - 14; x += 32) {
+      ctx.fillStyle = "#384158";
+      ctx.fillRect(x, 12, 18, 44);
+      ctx.fillStyle = "#76829e";
+      ctx.fillRect(x + 3, 15, 5, 38);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(x, 12, 18, 44);
+    }
+
+    // 中部市政石材壁柱与内凹浮雕墙板
+    ctx.fillStyle = "#747d96";
+    ctx.fillRect(18, 82, s - 36, 114);
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fillRect(24, 88, s - 48, 10);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(18, 82, s - 36, 114);
+
+    // 底部黄黑高对比市政防撞腰线
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 208, s, 44);
+    ctx.clip();
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(0, 208, s, 44);
+    ctx.fillStyle = "#101016";
+    for (let x = -32; x < s + 32; x += 36) {
+      ctx.beginPath();
+      ctx.moveTo(x, 208);
+      ctx.lineTo(x + 18, 208);
+      ctx.lineTo(x - 6, 252);
+      ctx.lineTo(x - 24, 252);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 7;
+    ctx.strokeRect(3, 3, s - 6, s - 6);
+    ctx.beginPath();
+    ctx.moveTo(0, 68);
+    ctx.lineTo(s, 68);
+    ctx.moveTo(0, 208);
+    ctx.lineTo(s, 208);
+    ctx.stroke();
+  }
+
+  _drawChinatownFacade(ctx, s) {
+    // ISSUE #2 落日唐人街专属立面：朱红漆墙 + 鎏金雕花窗格 + 翡翠绿飞檐腰线 + 霓虹牌匾
+    ctx.fillStyle = "#9e1b24";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, 0, s, s, "rgba(20,6,10,0.26)", 12, 2.8);
+
+    // 翡翠绿与金黄琉璃檐口带
+    ctx.fillStyle = "#00a86b";
+    ctx.fillRect(0, 10, s, 22);
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(0, 32, s, 10);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(0, 10, s, 22);
+    ctx.strokeRect(0, 32, s, 10);
+
+    // 顶部霓虹金匾
+    ctx.fillStyle = "#16121e";
+    ctx.fillRect(26, 52, s - 52, 46);
+    ctx.strokeStyle = "#ffe01b";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(26, 52, s - 52, 46);
+    ctx.fillStyle = "#ffdf2b";
+    ctx.font = "900 28px Impact, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DRAGON ARCADE", s / 2, 85);
+
+    // 左右两扇中式鎏金花格亮窗
+    [24, 140].forEach((wx) => {
+      ctx.fillStyle = "#ffae19";
+      ctx.fillRect(wx, 114, 92, 110);
+      ctx.fillStyle = "#fff3c4";
+      ctx.fillRect(wx + 10, 124, 30, 88);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 6;
+      ctx.strokeRect(wx, 114, 92, 110);
+      ctx.strokeRect(wx + 14, 128, 64, 82);
+      ctx.beginPath();
+      ctx.moveTo(wx + 46, 114);
+      ctx.lineTo(wx + 46, 224);
+      ctx.moveTo(wx, 169);
+      ctx.lineTo(wx + 92, 169);
+      ctx.stroke();
+    });
+
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, s - 8, s - 8);
+  }
+
+  _drawHarborContainerFacade(ctx, s) {
+    // ISSUE #4 布鲁克林海港专属立面：深海蓝/锈橙波纹集装箱钢板与港口货运卷帘门
+    ctx.fillStyle = "#1f4e78";
+    ctx.fillRect(0, 0, s, s);
+
+    // 竖向集装箱波纹压槽
+    for (let x = 16; x < s - 12; x += 24) {
+      ctx.fillStyle = (x / 24) % 2 === 0 ? "#2a6496" : "#173c5e";
+      ctx.fillRect(x, 16, 16, s - 32);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x, 16, 16, s - 32);
+    }
+    this._halftone(ctx, 0, 120, s, 136, "rgba(10,12,18,0.28)", 12, 2.8);
+
+    // 货运钢印编号牌
+    ctx.fillStyle = "#ff7a00";
+    ctx.fillRect(24, 34, s - 48, 56);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(24, 34, s - 48, 56);
+    ctx.fillStyle = "#101016";
+    ctx.font = "900 30px Impact, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("HARBOR PIER 44", s / 2, 73);
+
+    // 下部钢制货运卷帘门
+    ctx.fillStyle = "#5c6778";
+    ctx.fillRect(32, 112, s - 64, 136);
+    ctx.strokeRect(32, 112, s - 64, 136);
+    for (let y = 128; y < 244; y += 18) {
+      ctx.beginPath();
+      ctx.moveTo(32, y);
+      ctx.lineTo(s - 32, y);
+      ctx.stroke();
+    }
+
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, s - 8, s - 8);
+  }
+
+  _drawMarbleBankFacade(ctx, s) {
+    // ISSUE #6 大都会金融广场专属立面：古典象牙白大理石柱廊 + 黄金装饰艺术腰线 + 拱形高窗
+    ctx.fillStyle = "#e8e2d5";
+    ctx.fillRect(0, 0, s, s);
+    this._halftone(ctx, 0, 130, s, 126, "rgba(30,28,42,0.14)", 14, 2.4);
+
+    // 黄金 Art-Deco 浮雕横梁
+    ctx.fillStyle = "#d4af37";
+    ctx.fillRect(0, 14, s, 24);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(0, 14, s, 24);
+
+    // 两侧古典凹槽大理石壁柱
+    [12, s - 44].forEach((px) => {
+      ctx.fillStyle = "#f7f4ec";
+      ctx.fillRect(px, 38, 32, s - 46);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(px, 38, 32, s - 46);
+    });
+
+    // 中央深青色金融大厦高窗与金色窗格
+    ctx.fillStyle = "#142a46";
+    ctx.fillRect(58, 54, s - 116, 178);
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(68, 64, s - 136, 158);
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.fillRect(76, 72, 26, 142);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 7;
+    ctx.strokeRect(58, 54, s - 116, 178);
+    ctx.strokeStyle = "#d4af37";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(s / 2, 54);
+    ctx.lineTo(s / 2, 232);
+    ctx.moveTo(58, 142);
+    ctx.lineTo(s - 58, 142);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, s - 8, s - 8);
+  }
+
+  // 根据关卡地图网格一次性烘焙整张街区「柏油马路 + 双黄中心线 + 斑马线 + 水泥人行道」高清贴图（仅 1 次 Draw Call！）
+  createStreetNetworkTexture(map, mapW, mapH) {
+    const cs = 64; // 每格 64×64 像素
+    const c = document.createElement("canvas");
+    c.width = mapW * cs;
+    c.height = mapH * cs;
+    const ctx = c.getContext("2d");
+
+    const isBuilding = (gx, gz) => {
+      if (gx <= 0 || gz <= 0 || gx >= mapW - 1 || gz >= mapH - 1) return false;
+      const v = map[gz]?.[gx] || 0;
+      return v > 0 && v !== 6 && v !== 10;
+    };
+
+    const isSidewalk = (gx, gz) => {
+      if (gx < 0 || gz < 0 || gx >= mapW || gz >= mapH) return false;
+      const v = map[gz][gx];
+      if (v > 0 && v !== 6 && v !== 10) return false;
+      // 紧贴外围护栏或紧贴街区建筑物四周的一圈为水泥人行道
+      if (gx === 1 || gz === 1 || gx === mapW - 2 || gz === mapH - 2) return true;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (isBuilding(gx + dx, gz + dz)) return true;
+        }
+      }
+      return false;
+    };
+
+    // 1. 铺设深灰黑柏油马路底色
+    ctx.fillStyle = "#222430";
+    ctx.fillRect(0, 0, c.width, c.height);
+    this._halftone(ctx, 0, 0, c.width, c.height, "rgba(0,0,0,0.28)", 16, 2.4);
+
+    // 2. 绘制每个格子的路面 / 水泥人行道与路沿石
+    for (let z = 0; z < mapH; z++) {
+      for (let x = 0; x < mapW; x++) {
+        const px = x * cs;
+        const py = z * cs;
+
+        if (isSidewalk(x, z)) {
+          // 浅灰暖色水泥人行道砖面
+          ctx.fillStyle = "#7a8094";
+          ctx.fillRect(px, py, cs, cs);
+          ctx.fillStyle = "#8a90a6";
+          ctx.fillRect(px + 4, py + 4, cs - 8, cs - 8);
+
+          // 人行道十字方砖接缝
+          ctx.strokeStyle = "#484c5c";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(px + 1, py + 1, cs - 2, cs - 2);
+          ctx.beginPath();
+          ctx.moveTo(px + cs / 2, py);
+          ctx.lineTo(px + cs / 2, py + cs);
+          ctx.moveTo(px, py + cs / 2);
+          ctx.lineTo(px + cs, py + cs / 2);
+          ctx.stroke();
+
+          // 朝向柏油马路一侧绘制粗黑墨线 + 灰白路沿石（马路牙子）
+          ctx.fillStyle = "#b8bfd4";
+          ctx.strokeStyle = "#101016";
+          ctx.lineWidth = 4;
+          if (!isSidewalk(x, z - 1) && !isBuilding(x, z - 1)) {
+            ctx.fillRect(px, py, cs, 8);
+            ctx.strokeRect(px, py, cs, 8);
+          }
+          if (!isSidewalk(x, z + 1) && !isBuilding(x, z + 1)) {
+            ctx.fillRect(px, py + cs - 8, cs, 8);
+            ctx.strokeRect(px, py + cs - 8, cs, 8);
+          }
+          if (!isSidewalk(x - 1, z) && !isBuilding(x - 1, z)) {
+            ctx.fillRect(px, py, 8, cs);
+            ctx.strokeRect(px, py, 8, cs);
+          }
+          if (!isSidewalk(x + 1, z) && !isBuilding(x + 1, z)) {
+            ctx.fillRect(px + cs - 8, py, 8, cs);
+            ctx.strokeRect(px + cs - 8, py, 8, cs);
+          }
+        } else {
+          // 柏油马路微接缝
+          ctx.strokeStyle = "rgba(14,14,22,0.55)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(px, py, cs, cs);
+        }
+      }
+    }
+
+    // 3. 识别主干道与横向马路，自动绘制双黄中心线、车道虚线与十字路口斑马线
+    // 统计每行/每列的纯马路宽度以找出东西向大道与南北向街道中心
+    const roadRows = [];
+    for (let z = 2; z < mapH - 2; z++) {
+      let roadCount = 0;
+      for (let x = 2; x < mapW - 2; x++) {
+        if (!isSidewalk(x, z) && !isBuilding(x, z)) roadCount++;
+      }
+      if (roadCount >= Math.floor(mapW * 0.45)) roadRows.push(z);
+    }
+
+    const roadCols = [];
+    for (let x = 2; x < mapW - 2; x++) {
+      let roadCount = 0;
+      for (let z = 2; z < mapH - 2; z++) {
+        if (!isSidewalk(x, z) && !isBuilding(x, z)) roadCount++;
+      }
+      if (roadCount >= Math.floor(mapH * 0.42)) roadCols.push(x);
+    }
+
+    const rowSet = new Set(roadRows);
+    const colSet = new Set(roadCols);
+
+    // 将连续的马路行/列分组为独立街道走廊
+    const groupContiguous = (arr) => {
+      const groups = [];
+      for (const v of arr) {
+        if (!groups.length || v !== groups[groups.length - 1][groups[groups.length - 1].length - 1] + 1) {
+          groups.push([v]);
+        } else {
+          groups[groups.length - 1].push(v);
+        }
+      }
+      return groups;
+    };
+
+    const hRoadGroups = groupContiguous(roadRows);
+    const vRoadGroups = groupContiguous(roadCols);
+
+    // 绘制东西向马路的双黄中心线、车道白虚线与路口斑马线
+    for (const grp of hRoadGroups) {
+      const midZ = ((grp[0] + grp[grp.length - 1] + 1) / 2) * cs;
+      for (let x = 2; x < mapW - 2; x++) {
+        if (isSidewalk(x, grp[0]) || isBuilding(x, grp[0])) continue;
+        const px = x * cs;
+        const inIntersection = colSet.has(x);
+        const prevInIntersection = colSet.has(x - 1);
+        const nextInIntersection = colSet.has(x + 1);
+
+        if (!inIntersection) {
+          // 双黄马路中心线
+          ctx.fillStyle = "#ffe01b";
+          ctx.fillRect(px + 6, midZ - 6, cs - 12, 4);
+          ctx.fillRect(px + 6, midZ + 2, cs - 12, 4);
+
+          // 宽阔主干道两侧的车道白色分界虚线
+          if (grp.length >= 3) {
+            ctx.fillStyle = "rgba(255,255,255,0.72)";
+            ctx.fillRect(px + 14, grp[0] * cs + cs - 3, cs - 28, 3);
+            ctx.fillRect(px + 14, grp[grp.length - 1] * cs, cs - 28, 3);
+          }
+
+          // 靠近十字路口入口处绘制醒目的白色人行横道斑马线
+          if (nextInIntersection || prevInIntersection) {
+            const topY = grp[0] * cs + 8;
+            const botY = (grp[grp.length - 1] + 1) * cs - 8;
+            ctx.fillStyle = "#f2f5ff";
+            ctx.strokeStyle = "#101016";
+            ctx.lineWidth = 2;
+            for (let yy = topY + 4; yy < botY - 8; yy += 14) {
+              ctx.fillRect(px + 10, yy, cs - 20, 8);
+              ctx.strokeRect(px + 10, yy, cs - 20, 8);
+            }
+          }
+        }
+      }
+    }
+
+    // 绘制南北向马路的双黄中心线与路口斑马线
+    for (const grp of vRoadGroups) {
+      const midX = ((grp[0] + grp[grp.length - 1] + 1) / 2) * cs;
+      for (let z = 2; z < mapH - 2; z++) {
+        if (isSidewalk(grp[0], z) || isBuilding(grp[0], z)) continue;
+        const py = z * cs;
+        const inIntersection = rowSet.has(z);
+        const prevInIntersection = rowSet.has(z - 1);
+        const nextInIntersection = rowSet.has(z + 1);
+
+        if (!inIntersection) {
+          ctx.fillStyle = "#ffe01b";
+          ctx.fillRect(midX - 6, py + 6, 4, cs - 12);
+          ctx.fillRect(midX + 2, py + 6, 4, cs - 12);
+
+          if (nextInIntersection || prevInIntersection) {
+            const leftX = grp[0] * cs + 8;
+            const rightX = (grp[grp.length - 1] + 1) * cs - 8;
+            ctx.fillStyle = "#f2f5ff";
+            ctx.strokeStyle = "#101016";
+            ctx.lineWidth = 2;
+            for (let xx = leftX + 4; xx < rightX - 8; xx += 14) {
+              ctx.fillRect(xx, py + 10, 8, cs - 20);
+              ctx.strokeRect(xx, py + 10, 8, cs - 20);
+            }
+          }
+        } else {
+          // 十字路口中心绘制漫画圆形金属井盖
+          ctx.save();
+          ctx.fillStyle = "#3a3f52";
+          ctx.strokeStyle = "#101016";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(midX, py + cs / 2, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
   }
 
   _drawFloorFactory(ctx, s) {
