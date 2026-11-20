@@ -14,9 +14,19 @@ for (const name of ["Jump", "Dash", "Slide", "Punch", "Reload", "DryFire", "Magn
 }
 const texture = new THREE.Texture();
 const assets = {
-  textures: { asphalt: texture, factoryFloor: texture, labFloor: texture, barrel: texture },
+  textures: {
+    asphalt: texture,
+    streetFloor: texture,
+    factoryFloor: texture,
+    labFloor: texture,
+    barrel: texture,
+    comicShop: texture,
+    apartment: texture,
+    graffiti: texture,
+  },
   wallMaterials: { 1: new THREE.MeshBasicMaterial() },
   toonMat: ({ color = 0xffffff }) => new THREE.MeshBasicMaterial({ color }),
+  createStreetNetworkTexture: () => texture,
   addOutline() {},
   addCreaseLines() {},
 };
@@ -104,15 +114,26 @@ export class LanMatch {
     const level = COMIC_LEVELS[this.level];
     let { x, z, yaw } = level.playerStart;
     if (this.mode === "pvp") {
-      let spawn = ARENA_SPAWNS[player.slot];
+      const mapW = level.map[0].length;
+      const mapH = level.map.length;
+      const arenaSpawns = [
+        [2.5, 2.5],
+        [mapW - 2.5, mapH - 2.5],
+        [mapW - 2.5, 1.5],
+        [2.5, mapH - 2.5],
+      ].map(([sx, sz]) => {
+        const safe = this.engine._safeWorldPos(sx, sz);
+        return [safe.x / CELL_SIZE, safe.z / CELL_SIZE];
+      });
+      let spawn = arenaSpawns[player.slot % arenaSpawns.length];
       if (respawn) {
         const opponents = this.players.filter((other) => other !== player && other.hp > 0);
         const distance = ([px, pz]) => Math.min(...opponents.map((other) =>
           Math.hypot(px * CELL_SIZE - other.pos.x, pz * CELL_SIZE - other.pos.z)));
-        spawn = ARENA_SPAWNS.reduce((best, point) => distance(point) > distance(best) ? point : best, spawn);
+        spawn = arenaSpawns.reduce((best, point) => distance(point) > distance(best) ? point : best, spawn);
       }
       [x, z] = spawn;
-      yaw = Math.atan2(x - level.map[0].length / 2, z - level.map.length / 2);
+      yaw = Math.atan2(x - mapW / 2, z - mapH / 2);
     } else {
       const offsets = [[0, 0], [0.75, 0], [0, -0.75], [-0.75, 0]];
       const [dx, dz] = offsets[player.slot];
