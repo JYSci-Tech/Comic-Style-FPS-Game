@@ -52,6 +52,16 @@
       <div class="kill-panel kp-3"><span id="kp-text-3">K.O.!</span></div>
     </div>
 
+    <!-- 狙击枪高倍漫画开镜遮罩 -->
+    <div id="sniper-scope" class="sniper-scope hidden" aria-hidden="true">
+      <div class="scope-circle">
+        <div class="scope-line scope-h"></div>
+        <div class="scope-line scope-v"></div>
+        <div class="scope-center-dot"></div>
+        <div class="scope-tag">DEADEYE .50 · 4X</div>
+      </div>
+    </div>
+
     <!-- 游戏内 HUD -->
     <div id="hud" class="hud hidden">
       <div class="hud-top-left">
@@ -133,6 +143,7 @@
           <div class="w-slot active" data-weapon="0">1. MAGNUM</div>
           <div class="w-slot" data-weapon="1">2. SHOTGUN</div>
           <div class="w-slot" data-weapon="2">3. RAYGUN</div>
+          <div class="w-slot" data-weapon="3">4. SNIPER</div>
         </div>
         <div class="comic-box ammo-box">
           <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
@@ -243,6 +254,7 @@
 
     <div id="lan-match-screen" class="overlay-screen hidden">
       <section class="comic-modal lan-modal" aria-labelledby="lan-match-title">
+        <div id="lan-match-banner" class="result-status-banner hidden"></div>
         <div class="modal-tag hidden" id="lan-match-tag">MATCH RESULT</div>
         <h2 id="lan-match-title" class="modal-title"></h2>
         <p id="lan-match-desc" class="modal-desc"></p>
@@ -261,10 +273,15 @@
     <!-- 关卡过场漫画页 -->
     <div id="intermission-screen" class="overlay-screen hidden">
       <div class="comic-modal">
+        <div id="inter-banner" class="result-status-banner victory">★ 关卡通关 · STAGE CLEARED! ★</div>
         <div class="modal-tag" id="inter-tag">ISSUE #1 CLEARED!</div>
         <h2 class="modal-title" id="inter-title">MEANWHILE...</h2>
         <p class="modal-desc" id="inter-desc"></p>
         <div class="modal-stats" id="inter-stats"></div>
+        <div id="weapon-draft" class="weapon-draft hidden">
+          <div class="draft-title">★ 通关奖励：任选一把新武器带入下一期 ★</div>
+          <div id="weapon-draft-cards" class="draft-cards"></div>
+        </div>
         <p id="inter-wait" class="result-wait-hint hidden"></p>
         <div id="inter-actions" class="cover-actions">
           <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
@@ -291,6 +308,7 @@
     <!-- 阵亡/通关界面 -->
     <div id="end-screen" class="overlay-screen hidden">
       <div class="comic-modal">
+        <div id="end-banner" class="result-status-banner"></div>
         <div class="modal-tag" id="end-tag">THE END?</div>
         <h2 class="modal-title" id="end-title">YOU GOT INKED!</h2>
         <p class="modal-desc" id="end-desc"></p>

@@ -181,7 +181,7 @@ export class LanView {
         engine.addShotRecoil(weapon.recoilKick);
       }
       if (local || origin.distanceToSquared(engine.player.pos) < 30 ** 2) {
-        engine.audio[["playMagnum", "playShotgun", "playRaygun"][event.weapon]]();
+        engine.audio[["playMagnum", "playShotgun", "playRaygun", "playSniper"][event.weapon]]();
       }
     } else if (event.type === "melee" && local) {
       engine.weapons.punchTimer = 0.34;

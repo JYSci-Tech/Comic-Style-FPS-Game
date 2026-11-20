@@ -8,7 +8,7 @@ import { ACTIONS, INPUT_KEYS, KILL_LIMIT } from "./js/lan-rules.js";
 const NO_INPUT = { keys: {}, fire: false, ads: false };
 const ARENA_SPAWNS = [[2.5, 2.5], [12.5, 9.5], [11.5, 1.5], [2.5, 8.5]];
 const silent = {};
-for (const name of ["Jump", "Dash", "Punch", "Reload", "DryFire", "Magnum", "Shotgun", "Raygun",
+for (const name of ["Jump", "Dash", "Punch", "Reload", "DryFire", "Magnum", "Shotgun", "Raygun", "Sniper",
   "Hit", "EnemyDown", "Explosion", "Hurt", "Pickup", "EnemyShot"]) {
   silent["play" + name] = () => {};
 }
@@ -134,7 +134,7 @@ export class LanMatch {
       keys: Object.fromEntries(INPUT_KEYS.map((key, index) => [key, Boolean(bits & (1 << index))])),
       yaw: message.yaw % (Math.PI * 2),
       pitch: THREE.MathUtils.clamp(message.pitch, -1.35, 1.35),
-      weapon: Number.isInteger(message.weapon) && message.weapon >= 0 && message.weapon < 3 ? message.weapon : undefined,
+      weapon: Number.isInteger(message.weapon) && message.weapon >= 0 && message.weapon < 4 ? message.weapon : undefined,
       fire: message.fire === true,
       ads: message.ads === true,
     };
