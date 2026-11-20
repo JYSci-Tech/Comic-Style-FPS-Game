@@ -89,6 +89,11 @@ export class ComicFPS3DEngine {
     this.projectileId = 0;
     this.grenades = [];
     this.grenadeId = 0;
+    this.grenadeAiming = false;
+    this.grenadeAimKey = null;
+    this.grenadeAimPhase = 0;
+    this.grenadeAimGroup = null;
+    this._grenadeAimParts = null;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
@@ -163,6 +168,7 @@ export class ComicFPS3DEngine {
   }
 
   loadLevel(idx, keepStats = false, arena = false) {
+    this.cancelGrenadeAim();
     this.levelIdx = idx;
     this.arena = arena;
     const lvl = COMIC_LEVELS[idx];
@@ -1909,23 +1915,306 @@ export class ComicFPS3DEngine {
     return { mesh: g, led };
   }
 
-  throwGrenade(owner = this.player) {
-    if (owner.hp <= 0 || owner.grenades <= 0 || owner.grenadeCooldown > 0) return false;
-    owner.grenades -= 1;
-    owner.grenadeCooldown = 0.55;
+  canThrowGrenade(owner = this.player) {
+    return Boolean(owner && owner.hp > 0 && owner.grenades > 0 && (owner.grenadeCooldown || 0) <= 0);
+  }
 
+  _computeGrenadeLaunch(owner = this.player) {
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(owner.pitch, owner.yaw, 0, "YXZ")).normalize();
     const right = new THREE.Vector3(Math.cos(owner.yaw), 0, -Math.sin(owner.yaw));
     const spawnPos = new THREE.Vector3(owner.pos.x, owner.pos.y + this.eyeHeight - 0.12, owner.pos.z)
       .addScaledVector(dir, 0.85)
       .addScaledVector(right, 0.22);
+    const vel = dir.multiplyScalar(20.5);
+    vel.y += 5.4;
+    return { spawnPos, vel };
+  }
+
+  startGrenadeAim(keyCode = "KeyG") {
+    if (!this.canThrowGrenade()) return false;
+    this.grenadeAiming = true;
+    this.grenadeAimKey = keyCode;
+    this.mouseDown = false;
+    this.setAds(false);
+    this._ensureGrenadeAimVisuals();
+    this.updateGrenadeAim(0);
+    return true;
+  }
+
+  cancelGrenadeAim() {
+    this.grenadeAiming = false;
+    this.grenadeAimKey = null;
+    if (this.grenadeAimGroup) {
+      this.grenadeAimGroup.visible = false;
+    }
+  }
+
+  releaseGrenadeAim() {
+    if (!this.grenadeAiming) return false;
+    this.cancelGrenadeAim();
+    return this.throwGrenade(this.player);
+  }
+
+  predictGrenadeTrajectory(owner = this.player) {
+    const { spawnPos, vel } = this._computeGrenadeLaunch(owner);
+    const pos = spawnPos.clone();
+    const v = vel.clone();
+    const points = [pos.clone()];
+    let firstImpact = null;
+    let directHit = false;
+    const radius = 0.26;
+    const fixedDt = 1 / 45;
+    let rem = 1.45;
+
+    while (rem > 1e-5) {
+      const dt = Math.min(fixedDt, rem);
+      rem -= dt;
+      v.y -= 24.0 * dt;
+
+      const nextX = pos.x + v.x * dt;
+      if (this._isBlocked(nextX, pos.z, pos.y, radius)) {
+        v.x *= -0.52;
+      } else {
+        pos.x = nextX;
+      }
+
+      const nextZ = pos.z + v.z * dt;
+      if (this._isBlocked(pos.x, nextZ, pos.y, radius)) {
+        v.z *= -0.52;
+      } else {
+        pos.z = nextZ;
+      }
+
+      pos.y += v.y * dt;
+      const floorY = this._groundHeightAt(pos.x, pos.z) + radius;
+      if (pos.y <= floorY) {
+        pos.y = floorY;
+        if (!firstImpact) {
+          firstImpact = pos.clone();
+        }
+        if (Math.abs(v.y) > 2.2) {
+          v.y = -v.y * 0.48;
+        } else {
+          v.y = 0;
+        }
+        v.x *= 0.78;
+        v.z *= 0.78;
+      }
+
+      points.push(pos.clone());
+
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.root.position.x - pos.x, e.root.position.z - pos.z);
+        if (d < 1.15 * e.scale && pos.y < 2.6 * e.scale) {
+          directHit = true;
+          break;
+        }
+      }
+      if (directHit) break;
+    }
+
+    const finalPoint = points[points.length - 1];
+    const groundY = this._groundHeightAt(finalPoint.x, finalPoint.z);
+    let enemyInBlast = directHit;
+    if (!enemyInBlast) {
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (e.root.position.distanceTo(finalPoint) < 12.0) {
+          enemyInBlast = true;
+          break;
+        }
+      }
+    }
+
+    return { points, firstImpact, finalPoint, groundY, directHit, enemyInBlast };
+  }
+
+  _ensureGrenadeAimVisuals() {
+    if (!this.renderer || this.grenadeAimGroup) return;
+    const root = new THREE.Group();
+    root.visible = false;
+
+    const MAX_POINTS = 72;
+    const lineGeo = new THREE.BufferGeometry();
+    const linePos = new Float32Array(MAX_POINTS * 3);
+    lineGeo.setAttribute("position", new THREE.BufferAttribute(linePos, 3));
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffe01b, transparent: true, opacity: 0.92 });
+    const line = new THREE.Line(lineGeo, lineMat);
+    line.frustumCulled = false;
+    root.add(line);
+
+    const beadCount = 28;
+    const beadGeo = new THREE.SphereGeometry(0.11, 8, 8);
+    const beadMat = new THREE.MeshBasicMaterial({ color: 0xffe01b });
+    const beads = [];
+    for (let i = 0; i < beadCount; i++) {
+      const bead = new THREE.Mesh(beadGeo, beadMat);
+      this.assets.addOutline(bead, 1.25);
+      bead.frustumCulled = false;
+      root.add(bead);
+      beads.push(bead);
+    }
+
+    // 首次着地弹跳指示环
+    const bounceRingMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.9 });
+    const bounceRing = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.06, 6, 18), bounceRingMat);
+    bounceRing.rotation.x = Math.PI / 2;
+    bounceRing.visible = false;
+    root.add(bounceRing);
+
+    // 最终落点漫画靶标（发光外环 + 半透明危险区填充 + 旋转十字准心 + 悬空倒三角箭标）
+    const landingGroup = new THREE.Group();
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff7a00, transparent: true, opacity: 0.95 });
+    const outerRing = new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.09, 8, 28), ringMat);
+    outerRing.rotation.x = Math.PI / 2;
+
+    const fillMat = new THREE.MeshBasicMaterial({
+      color: 0xff7a00,
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const fillDisc = new THREE.Mesh(new THREE.CircleGeometry(1.85, 24), fillMat);
+    fillDisc.rotation.x = -Math.PI / 2;
+
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xffe01b });
+    const crossGroup = new THREE.Group();
+    const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.04, 0.16), crossMat);
+    const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.04, 2.2), crossMat);
+    crossGroup.position.y = 0.02;
+    crossGroup.add(c1, c2);
+
+    const arrowMat = new THREE.MeshBasicMaterial({ color: 0xff7a00 });
+    const arrowCone = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 6), arrowMat);
+    arrowCone.rotation.x = Math.PI;
+    arrowCone.position.y = 1.05;
+    this.assets.addOutline(arrowCone, 1.15);
+
+    landingGroup.add(outerRing, fillDisc, crossGroup, arrowCone);
+    root.add(landingGroup);
+
+    this.scene.add(root);
+    this.grenadeAimGroup = root;
+    this._grenadeAimParts = {
+      line,
+      lineGeo,
+      linePos,
+      lineMat,
+      MAX_POINTS,
+      beads,
+      beadMat,
+      bounceRing,
+      landingGroup,
+      ringMat,
+      fillMat,
+      crossGroup,
+      crossMat,
+      arrowCone,
+      arrowMat,
+    };
+  }
+
+  updateGrenadeAim(dt = 0) {
+    if (!this.grenadeAiming) {
+      if (this.grenadeAimGroup) this.grenadeAimGroup.visible = false;
+      return;
+    }
+    if (!this.canThrowGrenade()) {
+      this.cancelGrenadeAim();
+      return;
+    }
+    if (!this.renderer) return;
+
+    this._ensureGrenadeAimVisuals();
+    const parts = this._grenadeAimParts;
+    if (!parts) return;
+
+    this.grenadeAimPhase = (this.grenadeAimPhase + dt * 2.4) % 1;
+    const pred = this.predictGrenadeTrajectory(this.player);
+    const pts = pred.points;
+    const nPts = pts.length;
+    if (nPts < 2) {
+      this.grenadeAimGroup.visible = false;
+      return;
+    }
+
+    // 1. 更新抛物线轨迹线段
+    const drawCount = Math.min(nPts, parts.MAX_POINTS);
+    for (let i = 0; i < drawCount; i++) {
+      const idx = drawCount === nPts ? i : Math.round((i / (drawCount - 1)) * (nPts - 1));
+      const p = pts[idx];
+      parts.linePos[i * 3] = p.x;
+      parts.linePos[i * 3 + 1] = p.y;
+      parts.linePos[i * 3 + 2] = p.z;
+    }
+    parts.lineGeo.setDrawRange(0, drawCount);
+    parts.lineGeo.attributes.position.needsUpdate = true;
+
+    // 2. 按弧长均匀分布并流动更新 28 颗带黑墨描边的抛物线导引珠
+    const cumDist = new Float32Array(nPts);
+    let totalLen = 0;
+    for (let i = 1; i < nPts; i++) {
+      totalLen += pts[i].distanceTo(pts[i - 1]);
+      cumDist[i] = totalLen;
+    }
+
+    const beadCount = parts.beads.length;
+    let seg = 1;
+    for (let i = 0; i < beadCount; i++) {
+      const u = (i + this.grenadeAimPhase) / beadCount;
+      const targetDist = u * totalLen;
+      while (seg < nPts - 1 && cumDist[seg] < targetDist) {
+        seg++;
+      }
+      const prevD = cumDist[seg - 1];
+      const nextD = cumDist[seg];
+      const alpha = nextD > prevD ? (targetDist - prevD) / (nextD - prevD) : 0;
+      const bead = parts.beads[i];
+      bead.position.lerpVectors(pts[seg - 1], pts[seg], alpha);
+      const s = 0.78 + Math.sin(u * Math.PI) * 0.42;
+      bead.scale.setScalar(s);
+    }
+
+    // 3. 首次落点弹跳指示环（当落点与首次触地相距超过 1m 时显示）
+    if (pred.firstImpact && pred.firstImpact.distanceTo(pred.finalPoint) > 1.0) {
+      const by = this._groundHeightAt(pred.firstImpact.x, pred.firstImpact.z);
+      parts.bounceRing.position.set(pred.firstImpact.x, by + 0.05, pred.firstImpact.z);
+      parts.bounceRing.visible = true;
+    } else {
+      parts.bounceRing.visible = false;
+    }
+
+    // 4. 最终引爆落点靶标与威胁变色
+    const t = performance.now() * 0.008;
+    parts.landingGroup.position.set(pred.finalPoint.x, pred.groundY + 0.06, pred.finalPoint.z);
+    const pulse = 1 + Math.sin(t) * 0.08;
+    parts.landingGroup.scale.set(pulse, 1, pulse);
+    parts.crossGroup.rotation.y += dt * 1.8;
+    parts.arrowCone.position.y = 1.05 + Math.sin(t * 1.2) * 0.22;
+
+    const inDanger = pred.directHit || pred.enemyInBlast;
+    parts.beadMat.color.setHex(inDanger ? 0xff2a44 : 0xffe01b);
+    parts.lineMat.color.setHex(inDanger ? 0xff2a44 : 0xffe01b);
+    parts.ringMat.color.setHex(inDanger ? 0xff2a44 : 0xff7a00);
+    parts.fillMat.color.setHex(inDanger ? 0xff2a44 : 0xff7a00);
+    parts.arrowMat.color.setHex(inDanger ? 0xff2a44 : 0xff7a00);
+    parts.crossMat.color.setHex(inDanger ? 0xffffff : 0xffe01b);
+
+    this.grenadeAimGroup.visible = true;
+  }
+
+  throwGrenade(owner = this.player) {
+    if (!this.canThrowGrenade(owner)) return false;
+    owner.grenades -= 1;
+    owner.grenadeCooldown = 0.55;
+
+    const { spawnPos, vel } = this._computeGrenadeLaunch(owner);
 
     const { mesh, led } = this._makeGrenadeMesh();
     mesh.position.copy(spawnPos);
     this.levelRoot.add(mesh);
-
-    const vel = dir.multiplyScalar(20.5);
-    vel.y += 5.4;
 
     this.grenades.push({
       id: ++this.grenadeId,
@@ -2301,16 +2590,18 @@ export class ComicFPS3DEngine {
           if (pr.type === "medkit" && p.hp < p.maxHp) {
             pr.active = false;
             this.levelRoot.remove(pr.mesh);
+            const prevHp = p.hp;
             p.hp = Math.min(p.maxHp, p.hp + 35);
+            const gained = Math.max(1, Math.round(p.hp - prevHp));
             this.audio.playPickup();
-            this.callbacks.onPickup?.(p);
-            this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), "+35 HP!", "#38e54d", 1.15);
+            this.callbacks.onPickup?.(p, { kind: "medkit", amount: gained });
+            this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), `+${gained} HP!`, "#38e54d", 1.15);
           } else if (pr.type === "ammo") {
             pr.active = false;
             this.levelRoot.remove(pr.mesh);
-            this.weapons.addAmmo();
+            const gains = this.weapons.addAmmo();
             this.audio.playPickup();
-            this.callbacks.onPickup?.(p);
+            this.callbacks.onPickup?.(p, { kind: "ammo", gains });
             this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), "+AMMO!", "#ffe01b", 1.15);
           }
         }

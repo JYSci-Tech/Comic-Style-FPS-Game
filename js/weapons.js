@@ -745,9 +745,11 @@ export class WeaponSystem3D {
   }
 
   addAmmo() {
+    const before = this.weapons.map((w) => w.reserve);
     this.weapons[1].reserve = Math.min(this.weapons[1].maxReserve, this.weapons[1].reserve + 12);
     this.weapons[2].reserve = Math.min(this.weapons[2].maxReserve, this.weapons[2].reserve + 36);
     this.weapons[3].reserve = Math.min(this.weapons[3].maxReserve, this.weapons[3].reserve + 8);
+    return this.weapons.map((w, i) => (Number.isFinite(w.reserve) ? Math.max(0, w.reserve - before[i]) : 0));
   }
 
   select(idx) {

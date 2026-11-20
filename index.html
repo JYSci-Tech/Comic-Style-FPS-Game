@@ -117,11 +117,12 @@
       </div>
 
       <div class="hud-bottom-left">
-        <div class="comic-box portrait-box">
+        <div class="comic-box portrait-box" id="hud-portrait-box">
           <canvas id="portrait-canvas" width="64" height="64"></canvas>
         </div>
-        <div class="comic-box stats-box">
-          <div class="stat-row">
+        <div class="comic-box stats-box" id="hud-stats-box">
+          <span class="hud-gain-pop hp-gain-pop" id="hud-hp-gain" aria-hidden="true">+35 HP</span>
+          <div class="stat-row hp-row" id="hud-hp-row">
             <span class="stat-label">HP</span>
             <div class="bar-track">
               <div class="bar-fill hp-fill" id="hud-hp-fill"></div>
@@ -147,12 +148,14 @@
         </div>
         <div class="bottom-right-boxes">
           <div class="comic-box grenade-box" id="hud-grenade-box">
-            <div class="grenade-key">[G] 手雷</div>
+            <div class="grenade-key" id="hud-grenade-key">[G] 手雷</div>
             <div class="grenade-count" id="hud-grenade-count">x1</div>
           </div>
-          <div class="comic-box ammo-box">
+          <div class="comic-box ammo-box" id="hud-ammo-box">
+            <div class="ammo-shine-clip" aria-hidden="true"><div class="ammo-shine"></div></div>
+            <span class="hud-gain-pop ammo-gain-pop" id="hud-ammo-gain" aria-hidden="true">+AMMO!</span>
             <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
-            <div class="ammo-readout">
+            <div class="ammo-readout" id="hud-ammo-readout">
               <span id="hud-ammo-cur">6</span>
               <span class="ammo-sep">/</span>
               <span id="hud-ammo-res">∞</span>
@@ -163,7 +166,7 @@
       </div>
 
       <div class="controls-strip">
-        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · C 滑铲 · 左键射击 · 右键机瞄 · G/Q 手雷 · E/V 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
+        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · C 滑铲 · 左键射击 · 右键机瞄 · 按住 G/Q 瞄准松开扔手雷 · E/V 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
       </div>
     </div>
 
@@ -179,7 +182,7 @@
       </div>
 
       <div class="aaa-footer">
-        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · C 滑铲 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · G 手雷 · E 重拳</span>
+        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · C 滑铲 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · 按住 G 瞄准扔手雷 · E 重拳</span>
       </div>
 
       <nav class="aaa-menu" aria-label="主菜单">
@@ -204,7 +207,7 @@
               <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
               <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
               <li><b>C 键（奔跑中）</b>：高速战术滑铲（低视角滑行 + 可接跳跃）</li>
-              <li><b>G / Q 键</b>：投掷破片手雷（首局 1 颗，每晋级一局 +2 颗）</li>
+              <li><b>按住 G / Q 键</b>：移动鼠标预瞄抛物线与落点，松开投掷手雷 · 右键取消（首局 1 颗，每晋级 +2 颗）</li>
               <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
               <li><b>1–4 或滚轮 / R</b>：切换 3D 武器与换弹</li>
             </ul>
