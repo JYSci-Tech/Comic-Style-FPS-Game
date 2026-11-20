@@ -145,19 +145,25 @@
           <div class="w-slot" data-weapon="2">3. RAYGUN</div>
           <div class="w-slot" data-weapon="3">4. SNIPER</div>
         </div>
-        <div class="comic-box ammo-box">
-          <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
-          <div class="ammo-readout">
-            <span id="hud-ammo-cur">6</span>
-            <span class="ammo-sep">/</span>
-            <span id="hud-ammo-res">∞</span>
+        <div class="bottom-right-boxes">
+          <div class="comic-box grenade-box" id="hud-grenade-box">
+            <div class="grenade-key">[G] 手雷</div>
+            <div class="grenade-count" id="hud-grenade-count">x1</div>
           </div>
-          <div class="reload-hint hidden" id="hud-reload-hint">RELOADING...</div>
+          <div class="comic-box ammo-box">
+            <div class="weapon-name" id="hud-weapon-name">THE EQUALIZER</div>
+            <div class="ammo-readout">
+              <span id="hud-ammo-cur">6</span>
+              <span class="ammo-sep">/</span>
+              <span id="hud-ammo-res">∞</span>
+            </div>
+            <div class="reload-hint hidden" id="hud-reload-hint">RELOADING...</div>
+          </div>
         </div>
       </div>
 
       <div class="controls-strip">
-        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键射击 · 右键机瞄 · E/V 重拳 · R 换弹 · 1/2/3 切枪 · ESC 暂停
+        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · C 滑铲 · 左键射击 · 右键机瞄 · G/Q 手雷 · E/V 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
       </div>
     </div>
 
@@ -173,7 +179,7 @@
       </div>
 
       <div class="aaa-footer">
-        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · E 重拳</span>
+        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · C 滑铲 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · G 手雷 · E 重拳</span>
       </div>
 
       <nav class="aaa-menu" aria-label="主菜单">
@@ -197,8 +203,10 @@
               <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与移动平台</li>
               <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
               <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
+              <li><b>C 键（奔跑中）</b>：高速战术滑铲（低视角滑行 + 可接跳跃）</li>
+              <li><b>G / Q 键</b>：投掷破片手雷（首局 1 颗，每晋级一局 +2 颗）</li>
               <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
-              <li><b>1 / 2 / 3 或滚轮 / R</b>：切换 3D 武器与换弹</li>
+              <li><b>1–4 或滚轮 / R</b>：切换 3D 武器与换弹</li>
             </ul>
           </div>
           <div class="info-panel">
@@ -270,7 +278,7 @@
       </section>
     </div>
 
-    <!-- 关卡过场漫画页 -->
+    <!-- 关卡过场漫画页（只显示本局结果） -->
     <div id="intermission-screen" class="overlay-screen hidden">
       <div class="comic-modal">
         <div id="inter-banner" class="result-status-banner victory">★ 关卡通关 · STAGE CLEARED! ★</div>
@@ -278,14 +286,26 @@
         <h2 class="modal-title" id="inter-title">MEANWHILE...</h2>
         <p class="modal-desc" id="inter-desc"></p>
         <div class="modal-stats" id="inter-stats"></div>
-        <div id="weapon-draft" class="weapon-draft hidden">
-          <div class="draft-title">★ 通关奖励：任选一把新武器带入下一期 ★</div>
-          <div id="weapon-draft-cards" class="draft-cards"></div>
-        </div>
         <p id="inter-wait" class="result-wait-hint hidden"></p>
         <div id="inter-actions" class="cover-actions">
           <button id="btn-next-issue" class="comic-btn primary">进入下一期!</button>
           <button id="btn-home-inter" class="comic-btn secondary">回到首页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全屏战前武器选择界面（点击进入下一期后、开打前全屏显示） -->
+    <div id="weapon-select-screen" class="overlay-screen weapon-select-screen hidden">
+      <div class="weapon-select-wrap">
+        <div class="ws-header">
+          <div class="modal-tag" id="ws-tag">ARMORY · ISSUE #2</div>
+          <h2 class="modal-title ws-title" id="ws-title">选择你的新武器!</h2>
+          <p class="ws-subtitle" id="ws-subtitle"></p>
+        </div>
+        <div id="ws-cards" class="ws-cards"></div>
+        <div class="cover-actions ws-actions">
+          <button id="btn-ws-confirm" class="comic-btn primary" type="button" disabled>请先点击选择一把武器</button>
+          <button id="btn-ws-back" class="comic-btn secondary" type="button">返回对局结果</button>
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ export class LanView {
     this.engine = engine;
     this.avatars = new Map();
     this.projectiles = new Map();
+    this.grenades = new Map();
     this.localPosition = new THREE.Vector3();
     this.delta = new THREE.Vector3();
     this.deathTilt = 0;
@@ -20,8 +21,10 @@ export class LanView {
       root.removeFromParent();
     }
     for (const { mesh } of this.projectiles.values()) this.removeMesh(mesh);
+    for (const { mesh } of this.grenades.values()) mesh.removeFromParent();
     this.avatars.clear();
     this.projectiles.clear();
+    this.grenades.clear();
   }
 
   removeMesh(mesh) {
@@ -53,6 +56,7 @@ export class LanView {
     }
     this.localPosition.fromArray(player.p);
     engine.player.hp = player.hp;
+    engine.player.grenades = player.grenades ?? 1;
     engine.player.onGround = player.onGround;
     engine.player.dashCooldown = player.dash;
     engine.score = snapshot.mode === "pvp" ? player.kills : snapshot.score;
@@ -102,6 +106,7 @@ export class LanView {
       }
     });
     this.updateProjectiles(snapshot.projectiles);
+    this.updateGrenades(snapshot.grenades || []);
     for (const event of snapshot.events) this.playEvent(event, id);
     this.me = player;
     this.mode = snapshot.mode;
@@ -129,6 +134,7 @@ export class LanView {
       avatar.position.fromArray(player.p);
       if (avatar.life !== player.life) avatar.root.position.copy(avatar.position);
       avatar.yaw = player.yaw;
+      avatar.sliding = player.sliding === true;
       avatar.root.visible = player.hp > 0;
       avatar.life = player.life;
     }
@@ -164,6 +170,28 @@ export class LanView {
     }
   }
 
+  updateGrenades(current) {
+    const online = new Set();
+    for (const [id, x, y, z, fuse] of current) {
+      online.add(id);
+      let g = this.grenades.get(id);
+      if (!g) {
+        const { mesh, led } = this.engine._makeGrenadeMesh();
+        mesh.position.set(x, y, z);
+        this.engine.levelRoot.add(mesh);
+        g = { mesh, led, position: new THREE.Vector3(x, y, z), fuse };
+        this.grenades.set(id, g);
+      }
+      g.position.set(x, y, z);
+      g.fuse = fuse;
+    }
+    for (const [id, g] of this.grenades) {
+      if (online.has(id)) continue;
+      g.mesh.removeFromParent();
+      this.grenades.delete(id);
+    }
+  }
+
   playEvent(event, id) {
     const engine = this.engine;
     const local = event.id === id;
@@ -176,6 +204,7 @@ export class LanView {
       }
       if (local) {
         engine.player.fireTimer = 0.22;
+        engine.weapons.cooldown = weapon.fireRate;
         engine.weapons.recoil = weapon.recoilKick;
         engine.weapons.muzzleFlash = 0.075;
         engine.addShotRecoil(weapon.recoilKick);
@@ -186,10 +215,14 @@ export class LanView {
     } else if (event.type === "melee" && local) {
       engine.weapons.punchTimer = 0.34;
       engine.audio.playPunch();
+    } else if (event.type === "throw" && local) {
+      engine.audio.playThrow();
     } else if (event.type === "jump" && local) {
       engine.audio.playJump();
     } else if (event.type === "dash" && local) {
       engine.audio.playDash();
+    } else if (event.type === "slide" && local) {
+      engine.audio.playSlide();
     } else if (event.type === "pickup" && local) {
       engine.audio.playPickup();
     } else if (event.type === "hit" && local) {
@@ -223,14 +256,17 @@ export class LanView {
     const moving = player.pos.distanceToSquared(this.localPosition) > 0.001;
     player.moveSpeedRatio += ((moving ? 1 : 0) - (player.moveSpeedRatio || 0)) * Math.min(1, dt * 14);
     player.dashTimer = this.me?.dashing ? 0.1 : 0;
+    player.slideTimer = this.me?.sliding ? 0.1 : 0;
+    const targetSlide = this.me?.sliding ? 1 : 0;
+    player.slideAmount = (player.slideAmount || 0) + (targetSlide - (player.slideAmount || 0)) * Math.min(1, dt * (targetSlide ? 20 : 12));
     player.pos.lerp(this.localPosition, alpha);
-    if (moving && player.onGround) player.bobPhase += dt * 11.5;
+    if (moving && player.onGround && !this.me?.sliding) player.bobPhase += dt * 11.5;
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.fireTimer = Math.max(0, player.fireTimer - dt);
     engine._decayCameraRecoil(dt);
-    engine.speedLineAlpha = this.me.dashing ? 1 : Math.max(0, engine.speedLineAlpha - dt * 3);
-    engine.weapons.update(dt, moving && player.onGround);
-    const baseFov = this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount);
+    engine.speedLineAlpha = (this.me.dashing || this.me.sliding) ? Math.max(engine.speedLineAlpha, this.me.dashing ? 1 : 0.65) : Math.max(0, engine.speedLineAlpha - dt * 3);
+    engine.weapons.update(dt, moving && player.onGround && !this.me?.sliding, player.slideAmount);
+    const baseFov = (this.me.dashing ? 85 : THREE.MathUtils.lerp(engine.baseFov, engine.weapons.current.adsFov, engine.weapons.adsAmount)) + player.slideAmount * 9;
     const fov = baseFov + engine.recoilFovKick;
     if (Math.abs(engine.camera.fov - fov) > 0.05) {
       engine.camera.fov += (fov - engine.camera.fov) * alpha;
@@ -253,10 +289,13 @@ export class LanView {
     for (const avatar of this.avatars.values()) {
       const speed = this.delta.subVectors(avatar.position, avatar.root.position).length();
       avatar.root.position.lerp(avatar.position, alpha);
+      const slideDrop = avatar.sliding ? 0.45 : 0;
+      avatar.root.position.y -= slideDrop;
+      avatar.root.rotation.x += ((avatar.sliding ? 0.55 : 0) - avatar.root.rotation.x) * alpha;
       avatar.root.rotation.y += Math.atan2(Math.sin(avatar.yaw - avatar.root.rotation.y),
         Math.cos(avatar.yaw - avatar.root.rotation.y)) * alpha;
-      if (speed > 0.03) avatar.step += dt * 11.5;
-      const swing = Math.sin(avatar.step) * Math.min(0.48, speed * 2);
+      if (speed > 0.03 && !avatar.sliding) avatar.step += dt * 11.5;
+      const swing = avatar.sliding ? 0 : Math.sin(avatar.step) * Math.min(0.48, speed * 2);
       avatar.leftLeg.rotation.x = swing;
       avatar.rightLeg.rotation.x = -swing;
     }
@@ -271,6 +310,15 @@ export class LanView {
       if (enemy.bodyParts.halo) enemy.bodyParts.halo.rotation.z += dt * 2.4;
     }
     for (const { mesh, position } of this.projectiles.values()) mesh.position.lerp(position, alpha);
+    for (const g of this.grenades.values()) {
+      g.mesh.position.lerp(g.position, alpha);
+      g.mesh.rotation.x += dt * 9;
+      g.mesh.rotation.z += dt * 7;
+      if (g.led) {
+        const blinkRate = g.fuse < 0.55 ? 24 : 10;
+        g.led.material.color.setHex(Math.floor(g.fuse * blinkRate) % 2 === 0 ? 0xff2a44 : 0xffe01b);
+      }
+    }
   }
 
   drawLabels(minimap) {

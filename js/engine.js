@@ -15,10 +15,16 @@ export function createPlayer() {
     dashTimer: 0,
     dashCooldown: 0,
     dashDir: new THREE.Vector3(),
+    slideTimer: 0,
+    slideCooldown: 0,
+    slideAmount: 0,
+    slideDir: new THREE.Vector3(),
     hurtTimer: 0,
     fireTimer: 0,
     bobPhase: 0,
     moveSpeedRatio: 0,
+    grenades: 1,
+    grenadeCooldown: 0,
   };
 }
 
@@ -76,6 +82,8 @@ export class ComicFPS3DEngine {
     this.levelTime = 0;
     this.enemyProjectiles = [];
     this.projectileId = 0;
+    this.grenades = [];
+    this.grenadeId = 0;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
@@ -126,6 +134,7 @@ export class ComicFPS3DEngine {
 
   loadLevel(idx, keepStats = false, arena = false) {
     this.levelIdx = idx;
+    this.arena = arena;
     const lvl = COMIC_LEVELS[idx];
     this.level = lvl;
     this.map = lvl.map;
@@ -140,6 +149,8 @@ export class ComicFPS3DEngine {
     this.levelTime = 0;
     this.enemyProjectiles = [];
     this.projectileId = 0;
+    this.grenades = [];
+    this.grenadeId = 0;
     this.tracers = [];
     this.particles = [];
     this.shockwaves = [];
@@ -235,10 +246,15 @@ export class ComicFPS3DEngine {
     this.player.pitch = 0;
     this.player.dashTimer = 0;
     this.player.dashCooldown = 0;
+    this.player.slideTimer = 0;
+    this.player.slideCooldown = 0;
+    this.player.slideAmount = 0;
     this.player.hurtTimer = 0;
+    this.player.grenadeCooldown = 0;
 
     if (!keepStats) {
       this.player.hp = 100;
+      this.player.grenades = 1;
       this.score = 0;
       this.kills = 0;
       this.combo = 0;
@@ -246,6 +262,7 @@ export class ComicFPS3DEngine {
       this.weapons.resetAll();
     } else {
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 35);
+      this.player.grenades = (this.player.grenades || 0) + 2;
     }
 
     // 生成 3D 关节敌人
@@ -705,12 +722,36 @@ export class ComicFPS3DEngine {
 
   triggerJump() {
     if (this.player.onGround) {
-      this.player.velY = 9.2;
+      const wasSliding = this.player.slideTimer > 0;
+      this.player.slideTimer = 0;
+      this.player.velY = wasSliding ? 9.8 : 9.2;
       this.player.onGround = false;
       this.audio.playJump();
       return true;
     }
     return false;
+  }
+
+  triggerSlide() {
+    const p = this.player;
+    if (!p.onGround || p.slideTimer > 0 || p.slideCooldown > 0 || p.dashTimer > 0) return false;
+    const forward = new THREE.Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
+    const right = new THREE.Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
+    const dir = new THREE.Vector3();
+    if (this.keys["KeyW"] || this.keys["ArrowUp"]) dir.add(forward);
+    if (this.keys["KeyS"] || this.keys["ArrowDown"]) dir.sub(forward);
+    if (this.keys["KeyD"]) dir.add(right);
+    if (this.keys["KeyA"]) dir.sub(right);
+    // 只有奔跑/移动状态下才能按 C 触发滑铲
+    if (dir.lengthSq() === 0) return false;
+    dir.normalize();
+
+    p.slideDir.copy(dir);
+    p.slideTimer = 0.58;
+    p.slideCooldown = 0.85;
+    this.speedLineAlpha = Math.max(this.speedLineAlpha, 0.72);
+    this.audio.playSlide();
+    return true;
   }
 
   triggerDash() {
@@ -798,6 +839,9 @@ export class ComicFPS3DEngine {
     }
     if (p.dashTimer > 0) {
       spread += 0.042;
+    }
+    if (p.slideTimer > 0) {
+      spread += isAds ? 0.008 : 0.016;
     }
     return spread;
   }
@@ -1075,7 +1119,201 @@ export class ComicFPS3DEngine {
     this._updateProps(dt);
     this._updateEnemies(dt);
     this._updateProjectiles(dt);
+    this._updateGrenades(dt, [this.player]);
     this._updateFX(dt);
+  }
+
+  _makeGrenadeMesh() {
+    if (!this.renderer) {
+      return { mesh: new THREE.Object3D(), led: null };
+    }
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(0.24, 10, 10),
+      this.assets.toonMat({ color: 0x2e7d32 })
+    );
+    body.scale.set(1, 1.18, 1);
+    this.assets.addOutline(body, 1.12);
+
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.25, 0.08, 10),
+      this.assets.toonMat({ color: 0xffe01b })
+    );
+    this.assets.addOutline(band, 1.08);
+
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.1, 0.12, 8),
+      this.assets.toonMat({ color: 0x37474f })
+    );
+    cap.position.y = 0.28;
+
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff2a44 })
+    );
+    led.position.y = 0.36;
+
+    g.add(body, band, cap, led);
+    return { mesh: g, led };
+  }
+
+  throwGrenade(owner = this.player) {
+    if (owner.hp <= 0 || owner.grenades <= 0 || owner.grenadeCooldown > 0) return false;
+    owner.grenades -= 1;
+    owner.grenadeCooldown = 0.55;
+
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(owner.pitch, owner.yaw, 0, "YXZ")).normalize();
+    const right = new THREE.Vector3(Math.cos(owner.yaw), 0, -Math.sin(owner.yaw));
+    const spawnPos = new THREE.Vector3(owner.pos.x, owner.pos.y + this.eyeHeight - 0.12, owner.pos.z)
+      .addScaledVector(dir, 0.85)
+      .addScaledVector(right, 0.22);
+
+    const { mesh, led } = this._makeGrenadeMesh();
+    mesh.position.copy(spawnPos);
+    this.levelRoot.add(mesh);
+
+    const vel = dir.multiplyScalar(20.5);
+    vel.y += 5.4;
+
+    this.grenades.push({
+      id: ++this.grenadeId,
+      owner,
+      mesh,
+      led,
+      vel,
+      fuse: 1.45,
+    });
+
+    this.audio.playThrow();
+    this.callbacks.onGrenadeThrow?.(owner);
+    return true;
+  }
+
+  _updateGrenades(dt, players = [this.player]) {
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      g.fuse -= dt;
+      g.vel.y -= 24.0 * dt;
+
+      const radius = 0.26;
+      const nextX = g.mesh.position.x + g.vel.x * dt;
+      if (this._isBlocked(nextX, g.mesh.position.z, g.mesh.position.y, radius)) {
+        g.vel.x *= -0.52;
+      } else {
+        g.mesh.position.x = nextX;
+      }
+
+      const nextZ = g.mesh.position.z + g.vel.z * dt;
+      if (this._isBlocked(g.mesh.position.x, nextZ, g.mesh.position.y, radius)) {
+        g.vel.z *= -0.52;
+      } else {
+        g.mesh.position.z = nextZ;
+      }
+
+      g.mesh.position.y += g.vel.y * dt;
+      const floorY = this._groundHeightAt(g.mesh.position.x, g.mesh.position.z) + 0.26;
+      if (g.mesh.position.y <= floorY) {
+        g.mesh.position.y = floorY;
+        if (Math.abs(g.vel.y) > 2.2) {
+          g.vel.y = -g.vel.y * 0.48;
+        } else {
+          g.vel.y = 0;
+        }
+        g.vel.x *= 0.78;
+        g.vel.z *= 0.78;
+      }
+
+      g.mesh.rotation.x += dt * 9;
+      g.mesh.rotation.z += dt * 7;
+
+      if (g.led) {
+        const blinkRate = g.fuse < 0.55 ? 24 : 10;
+        g.led.material.color.setHex(Math.floor(g.fuse * blinkRate) % 2 === 0 ? 0xff2a44 : 0xffe01b);
+      }
+
+      // 贴脸直接命中敌方单位或敌人直接引爆
+      let directHit = false;
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.root.position.x - g.mesh.position.x, e.root.position.z - g.mesh.position.z);
+        if (d < 1.15 * e.scale && g.mesh.position.y < 2.6 * e.scale) {
+          directHit = true;
+          break;
+        }
+      }
+      if (!directHit) {
+        for (const pl of players) {
+          if (pl === g.owner || pl.hp <= 0) continue;
+          const d = Math.hypot(pl.pos.x - g.mesh.position.x, pl.pos.z - g.mesh.position.z);
+          if (d < 1.05 && Math.abs(g.mesh.position.y - (pl.pos.y + 1.0)) < 1.2) {
+            directHit = true;
+            break;
+          }
+        }
+      }
+
+      if (g.fuse <= 0 || directHit) {
+        this._detonateGrenade(g, players);
+        this.levelRoot.remove(g.mesh);
+        this.grenades.splice(i, 1);
+      }
+    }
+  }
+
+  _detonateGrenade(g, players = [this.player]) {
+    const pos = g.mesh.position.clone();
+    this.audio.playExplosion();
+    this.shake = 18;
+    this.hitstop = 0.04;
+    this.callbacks.onExplosion?.(pos);
+
+    this.spawnPopup(pos.clone().add(new THREE.Vector3(0, 1.5, 0)), "KABOOM!", "#ff7a00", 1.7);
+    this._spawnParticles(pos, 0xff7a00, 22);
+    this._spawnParticles(pos, 0xffe01b, 14);
+    this._spawnShockwave(pos, 0xff7a00);
+
+    const radius = 12.0;
+    let hitEnemyOrRival = false;
+
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const dist = e.root.position.distanceTo(pos);
+      if (dist < radius) {
+        hitEnemyOrRival = true;
+        const dmg = Math.max(55, Math.round(165 * (1 - dist / (radius + 2.5))));
+        this._damageEnemy(e, dmg, dist < 3.6, "BOOM!", e.root.position.clone().setY(1.6 * e.scale));
+      }
+    }
+
+    for (const pr of this.props) {
+      if (pr.active && pr.type === "barrel") {
+        if (pr.mesh.position.distanceTo(pos) < radius * 0.85) {
+          setTimeout(() => this._explodeBarrel(pr), 90);
+        }
+      }
+    }
+
+    for (const pl of players) {
+      if (pl.hp <= 0) continue;
+      const dist = Math.hypot(pos.x - pl.pos.x, pos.z - pl.pos.z);
+      if (pl === g.owner) {
+        if (dist < 5.2) this._damagePlayer(Math.round(28 * (1 - dist / 6.0)), pl);
+      } else if (this.arena && dist < 11.5) {
+        const dmg = Math.max(35, Math.round(125 * (1 - dist / 13.5)));
+        const hitOk = this.callbacks.onPlayerHit
+          ? this.callbacks.onPlayerHit(pl, dmg, g.owner)
+          : this._damagePlayer(dmg, pl);
+        if (hitOk) {
+          hitEnemyOrRival = true;
+          this.spawnPopup(pl.pos.clone().add(new THREE.Vector3(0, 1.7, 0)), `-${dmg}`, "#ff7a00", 1.1, "dmg");
+        }
+      }
+    }
+
+    if (hitEnemyOrRival) {
+      this.audio.playHit(true);
+      this.callbacks.onHit?.(true, g.owner);
+    }
   }
 
   _updateDynamics(dt, players = [this.player], applyHazard = true) {
@@ -1195,6 +1433,8 @@ export class ComicFPS3DEngine {
     if (p.hurtTimer > 0) p.hurtTimer = Math.max(0, p.hurtTimer - dt);
     if (p.fireTimer > 0) p.fireTimer = Math.max(0, p.fireTimer - dt);
     if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - dt);
+    if (p.slideCooldown > 0) p.slideCooldown = Math.max(0, p.slideCooldown - dt);
+    if (p.grenadeCooldown > 0) p.grenadeCooldown = Math.max(0, p.grenadeCooldown - dt);
     this._decayCameraRecoil(dt);
     if (this.speedLineAlpha > 0) this.speedLineAlpha = Math.max(0, this.speedLineAlpha - dt * 3.0);
 
@@ -1202,11 +1442,15 @@ export class ComicFPS3DEngine {
     if (this.keys["ArrowLeft"]) p.yaw += 2.3 * dt;
     if (this.keys["ArrowRight"]) p.yaw -= 2.3 * dt;
 
-    // 水平移动
+    // 水平移动（冲刺 / 滑铲 / 常规走位）
     const move = new THREE.Vector3();
     if (p.dashTimer > 0) {
       p.dashTimer -= dt;
       move.copy(p.dashDir).multiplyScalar(25.0);
+    } else if (p.slideTimer > 0) {
+      p.slideTimer = Math.max(0, p.slideTimer - dt);
+      const slideSpd = 10.5 + (p.slideTimer / 0.58) * 9.0;
+      move.copy(p.slideDir).multiplyScalar(slideSpd);
     } else {
       const forward = new THREE.Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
       const right = new THREE.Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
@@ -1219,6 +1463,9 @@ export class ComicFPS3DEngine {
         move.normalize().multiplyScalar(spd);
       }
     }
+
+    const targetSlide = p.slideTimer > 0 ? 1 : 0;
+    p.slideAmount += (targetSlide - p.slideAmount) * Math.min(1, dt * (p.slideTimer > 0 ? 20 : 12));
 
     const isMoving = move.lengthSq() > 0.1;
     const targetMoveRatio = isMoving ? 1 : 0;
@@ -1245,14 +1492,14 @@ export class ComicFPS3DEngine {
       p.onGround = false;
     }
 
-    if (isMoving && p.onGround) {
+    if (isMoving && p.onGround && p.slideTimer <= 0) {
       p.bobPhase += dt * 11.5;
     }
 
-    // 动态平滑 FOV（ADS 机瞄缩放 / Dash 速度拉伸 / 开火后坐力脉冲）
+    // 动态平滑 FOV（ADS 机瞄缩放 / Dash / 滑铲速度拉伸 / 开火后坐力脉冲）
     const baseTargetFov = p.dashTimer > 0
       ? 85
-      : THREE.MathUtils.lerp(this.baseFov, this.weapons.current.adsFov, this.weapons.adsAmount);
+      : THREE.MathUtils.lerp(this.baseFov, this.weapons.current.adsFov, this.weapons.adsAmount) + p.slideAmount * 9;
     const targetFov = baseTargetFov + this.recoilFovKick;
     if (this.renderer && Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 18);
@@ -1262,12 +1509,14 @@ export class ComicFPS3DEngine {
     this._syncCamera(dt);
 
     // 武器更新与连发
-    this.weapons.update(dt, isMoving && p.onGround);
+    this.weapons.update(dt, isMoving && p.onGround && p.slideTimer <= 0, p.slideAmount);
   }
 
   _syncCamera() {
     const p = this.player;
-    const bob = this.renderer && p.onGround ? Math.sin(p.bobPhase) * 0.055 : 0;
+    const bob = this.renderer && p.onGround && p.slideTimer <= 0 ? Math.sin(p.bobPhase) * 0.055 : 0;
+    const slideDrop = this.renderer ? (p.slideAmount || 0) * 0.78 : 0;
+    const slideTilt = this.renderer ? -(p.slideAmount || 0) * 0.13 : 0;
     const activeShake = this.renderer && this.shake > 0 ? this.shake : 0;
     const sx = activeShake ? (Math.random() - 0.5) * activeShake * 0.018 : 0;
     const sy = activeShake ? (Math.random() - 0.5) * activeShake * 0.018 : 0;
@@ -1275,11 +1524,11 @@ export class ComicFPS3DEngine {
     const rotShakeY = activeShake ? (Math.random() - 0.5) * activeShake * 0.0028 : 0;
     const rotShakeZ = activeShake ? (Math.random() - 0.5) * activeShake * 0.0038 : 0;
 
-    this.camera.position.set(p.pos.x + sx, p.pos.y + this.eyeHeight + bob + sy, p.pos.z);
+    this.camera.position.set(p.pos.x + sx, p.pos.y + this.eyeHeight - slideDrop + bob + sy, p.pos.z);
     this.camera.rotation.set(
       p.pitch + (this.renderer ? this.recoilPitch + rotShakeX : 0),
       p.yaw + (this.renderer ? rotShakeY : 0),
-      this.renderer ? this.recoilRoll + rotShakeZ : 0,
+      this.renderer ? this.recoilRoll + slideTilt + rotShakeZ : 0,
       "YXZ"
     );
   }
@@ -1499,7 +1748,7 @@ export class ComicFPS3DEngine {
 
   _updateProjectiles(dt, players = [this.player]) {
     const targets = players.filter((player) => player.hp > 0)
-      .map((player) => [player, player.pos.clone().add(new THREE.Vector3(0, 1.15, 0))]);
+      .map((player) => [player, player.pos.clone().add(new THREE.Vector3(0, 1.15 - (player.slideAmount || 0) * 0.55, 0))]);
 
     for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
       const pr = this.enemyProjectiles[i];

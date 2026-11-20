@@ -638,6 +638,12 @@ export class WeaponSystem3D {
     grip.rotation.x = 0.28;
     group.add(stock, cheek, grip);
 
+    // 抛壳动画用黄铜狙击弹壳
+    const casing = this._part(new THREE.CylinderGeometry(0.009, 0.011, 0.056, 8), 0xffe01b, 0x332200, 1.08);
+    casing.rotation.x = Math.PI / 2;
+    casing.visible = false;
+    group.add(casing);
+
     group.add(this._buildGlovedHand(0.008, -0.095, 0.17));
 
     const muzzle = this._makeMuzzleStar(0x38e54d);
@@ -645,7 +651,7 @@ export class WeaponSystem3D {
     muzzle.position.set(0, 0.056, -0.78);
     group.add(muzzle);
 
-    return { group, muzzle, bolt: boltGroup, mag };
+    return { group, muzzle, bolt: boltGroup, mag, casing };
   }
 
   _buildPunchFist() {
@@ -680,16 +686,21 @@ export class WeaponSystem3D {
     return g;
   }
 
+  isBolting() {
+    const w = this.current;
+    return w?.id === "sniper" && !this.reloading && w.ammo > 0 && this.cooldown > 0.14 && this.cooldown < 0.88;
+  }
+
   _syncVisibility() {
     if (!this.models) return;
-    const hideForScope = this.current?.id === "sniper" && this.adsAmount > 0.72 && !this.reloading;
+    const hideForScope = this.isScoped();
     this.models.forEach((m, idx) => {
       m.group.visible = idx === this.currentIdx && !hideForScope;
     });
   }
 
   isScoped() {
-    return this.current?.id === "sniper" && this.adsAmount > 0.72 && !this.reloading;
+    return this.current?.id === "sniper" && !this.isBolting() && this.adsAmount > 0.72 && !this.reloading;
   }
 
   isUnlocked(idx) {
@@ -819,7 +830,7 @@ export class WeaponSystem3D {
     return this.currentModel.muzzle.getWorldPosition(target);
   }
 
-  update(dt, isMoving) {
+  update(dt, isMoving, slideAmount = 0) {
     if (this.autoReloadTimer > 0) {
       this.autoReloadTimer -= dt;
       if (this.autoReloadTimer <= 0 && this.current.ammo === 0) this.startReload();
@@ -831,9 +842,10 @@ export class WeaponSystem3D {
 
     this.swayTime += dt * (isMoving ? 9.5 : 2.1);
 
-    // 平滑 ADS 机瞄插值
-    const targetAds = this.isAds && !this.reloading ? 1 : 0;
-    this.adsAmount += (targetAds - this.adsAmount) * Math.min(1, dt * 14);
+    // 平滑 ADS 机瞄插值（狙击枪拉栓期间暂时退出开镜以展示拉栓动作）
+    const bolting = this.isBolting();
+    const targetAds = this.isAds && !this.reloading && !bolting ? 1 : 0;
+    this.adsAmount += (targetAds - this.adsAmount) * Math.min(1, dt * (bolting ? 24 : 14));
 
     if (this.reloading) {
       this.reloadTimer -= dt;
@@ -895,6 +907,7 @@ export class WeaponSystem3D {
           reloadRotX = 0.24 * t;
           reloadRotZ = -0.72 * t;
           if (m.reloadShell) m.reloadShell.visible = false;
+      if (m.casing) m.casing.visible = false;
           if (m.pump) m.pump.position.z = -0.2;
         } else if (p < 0.76) {
           const insertPhase = (p - 0.16) / 0.6; // 0 -> 1 内塞入 3 发霰弹
@@ -926,6 +939,7 @@ export class WeaponSystem3D {
           reloadRotX = 0.24 * settle + Math.sin(t * Math.PI) * 0.12;
           reloadRotZ = -0.72 * settle;
           if (m.reloadShell) m.reloadShell.visible = false;
+      if (m.casing) m.casing.visible = false;
           if (m.pump) {
             const rack = t > 0.2 ? Math.sin(((t - 0.2) / 0.8) * Math.PI) * 0.11 : 0;
             m.pump.position.z = -0.2 + rack;
@@ -967,17 +981,55 @@ export class WeaponSystem3D {
         }
       }
     } else {
-      // 非换弹状态平滑复位可动部件
+      // 非换弹状态平滑复位可动部件 & 处理狙击枪/霰弹枪射击间拉栓动作
       if (m.cylinder) m.cylinder.position.x += (0 - m.cylinder.position.x) * Math.min(1, dt * 16);
       if (m.reloadShell) m.reloadShell.visible = false;
+      if (m.casing) m.casing.visible = false;
       if (m.mag) m.mag.position.y += (-0.068 - m.mag.position.y) * Math.min(1, dt * 18);
       if (m.bolt) {
-        // 狙击枪开火后自动拉栓动作
-        const boltRack = w.id === "sniper" && this.cooldown > 0.22 && this.cooldown < 0.72
-          ? Math.sin(((this.cooldown - 0.22) / 0.5) * Math.PI)
-          : 0;
-        m.bolt.position.z += (0.11 + boltRack * 0.085 - m.bolt.position.z) * Math.min(1, dt * 22);
-        m.bolt.rotation.z += (boltRack * 0.75 - m.bolt.rotation.z) * Math.min(1, dt * 22);
+        if (bolting) {
+          // bp: 0 -> 1 对应冷却区间 0.88 -> 0.14，分为抬栓 -> 后拉抛壳 -> 推栓 -> 压栓锁闭
+          const bp = (0.88 - this.cooldown) / (0.88 - 0.14);
+          const tilt = Math.sin(bp * Math.PI);
+          reloadPosX = -0.042 * tilt;
+          reloadPosY = -0.024 * tilt;
+          reloadPosZ = 0.03 * Math.sin(Math.min(1, bp * 1.2) * Math.PI);
+          reloadRotX = 0.14 * tilt;
+          reloadRotY = -0.24 * tilt;
+          reloadRotZ = 0.34 * tilt;
+
+          let boltZ = 0.11;
+          let boltRot = 0;
+          if (bp < 0.22) {
+            boltRot = (bp / 0.22) * 0.95;
+          } else if (bp < 0.56) {
+            boltRot = 0.95;
+            boltZ = 0.11 + ((bp - 0.22) / 0.34) * 0.125;
+          } else if (bp < 0.84) {
+            boltRot = 0.95;
+            boltZ = 0.11 + (1 - (bp - 0.56) / 0.28) * 0.125;
+          } else {
+            boltRot = (1 - (bp - 0.84) / 0.16) * 0.95;
+          }
+          m.bolt.position.z = boltZ;
+          m.bolt.rotation.z = boltRot;
+
+          // 抛出一枚旋转的黄铜弹壳
+          if (m.casing) {
+            if (bp >= 0.35 && bp <= 0.86) {
+              const cp = (bp - 0.35) / 0.51;
+              m.casing.visible = true;
+              m.casing.position.set(0.055 + cp * 0.26, 0.055 + Math.sin(cp * Math.PI) * 0.14 - cp * 0.18, 0.05 + cp * 0.12);
+              m.casing.rotation.set(cp * 8, cp * 6, cp * 10);
+            } else {
+              m.casing.visible = false;
+            }
+          }
+        } else {
+          m.bolt.position.z += (0.11 - m.bolt.position.z) * Math.min(1, dt * 22);
+          m.bolt.rotation.z += (0 - m.bolt.rotation.z) * Math.min(1, dt * 22);
+          if (m.casing) m.casing.visible = false;
+        }
       }
       if (m.pump) {
         // 霰弹枪开火后半段自动拉栓动作
@@ -993,15 +1045,16 @@ export class WeaponSystem3D {
       }
     }
 
+    const slideTilt = slideAmount * (1 - this.adsAmount * 0.65);
     this.root.position.set(
-      basePos.x + bobX + reloadPosX,
-      basePos.y + bobY + reloadPosY - switchDip,
+      basePos.x + bobX + reloadPosX - slideTilt * 0.04,
+      basePos.y + bobY + reloadPosY - switchDip - slideTilt * 0.035,
       basePos.z + this.recoil * 0.09 + reloadPosZ
     );
     this.root.rotation.set(
       this.recoil * 0.24 + reloadRotX,
       reloadRotY,
-      reloadRotZ
+      reloadRotZ + slideTilt * 0.32
     );
 
     // 开镜时隐藏狙击枪 3D 模型，让 2D 高倍狙击镜画面干净呈现
