@@ -12,7 +12,7 @@ const files = new Map([
   ["/", ["index.html", "text/html"]],
   ["/index.html", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["audio", "engine", "lan", "lan-avatar", "lan-rules", "lan-view", "levels", "main", "textures", "weapon-art", "weapons"]
+  ...["audio", "engine", "lan", "lan-avatar", "lan-rules", "lan-view", "levels", "main", "scenery", "textures", "weapon-art", "weapons"]
     .map((name) => ["/js/" + name + ".js", ["js/" + name + ".js", "text/javascript"]]),
   ["/node_modules/three/build/three.module.js", ["node_modules/three/build/three.module.js", "text/javascript"]],
 ]);

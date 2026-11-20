@@ -722,6 +722,11 @@ window.addEventListener("keyup", (e) => {
   if (state === "lan" && lan.canControl) lan.sendInput();
 });
 
+function setHudText(node, value) {
+  const text = String(value);
+  if (node.textContent !== text) node.textContent = text;
+}
+
 function updateHUD(dt) {
   if (hitmarkerTimer > 0) {
     hitmarkerTimer -= dt;
@@ -742,15 +747,15 @@ function updateHUD(dt) {
 
   const lvl = engine.level;
   const pvp = state === "lan" && lan.match?.mode === "pvp";
-  hudIssue.textContent = pvp ? "玩家对战" : lvl.issue;
-  hudLevelName.textContent = lvl.name;
-  hudObjectiveLabel.textContent = pvp ? "击倒目标" : "消灭所有反派:";
-  hudEnemiesLeft.textContent = pvp ? String(KILL_LIMIT) : engine.getAliveEnemiesCount();
-  hudScore.textContent = String(engine.score).padStart(5, "0");
+  setHudText(hudIssue, pvp ? "玩家对战" : lvl.issue);
+  setHudText(hudLevelName, lvl.name);
+  setHudText(hudObjectiveLabel, pvp ? "击倒目标" : "消灭所有反派:");
+  setHudText(hudEnemiesLeft, pvp ? KILL_LIMIT : engine.getAliveEnemiesCount());
+  setHudText(hudScore, String(engine.score).padStart(5, "0"));
 
   if (engine.combo >= 2) {
     hudComboBox.classList.remove("hidden");
-    hudCombo.textContent = `x${engine.combo} COMBO!`;
+    setHudText(hudCombo, `x${engine.combo} COMBO!`);
   } else {
     hudComboBox.classList.add("hidden");
   }
@@ -765,20 +770,20 @@ function updateHUD(dt) {
 
   const hpPct = Math.max(0, (engine.player.hp / engine.player.maxHp) * 100);
   hudHpFill.style.width = `${hpPct}%`;
-  hudHpText.textContent = Math.ceil(engine.player.hp);
+  setHudText(hudHpText, Math.ceil(engine.player.hp));
 
   const dashReady = engine.player.dashCooldown <= 0;
   const dashPct = dashReady ? 100 : Math.max(0, (1 - engine.player.dashCooldown / 1.35) * 100);
   hudDashFill.style.width = `${dashPct}%`;
-  hudDashText.textContent = dashReady ? "RDY" : `${engine.player.dashCooldown.toFixed(1)}s`;
+  setHudText(hudDashText, dashReady ? "RDY" : `${engine.player.dashCooldown.toFixed(1)}s`);
 
   const w = engine.weapons.current;
-  hudWeaponName.textContent = w.name;
-  hudAmmoCur.textContent = w.ammo;
-  hudAmmoRes.textContent = w.reserve === Infinity ? "∞" : w.reserve;
+  setHudText(hudWeaponName, w.name);
+  setHudText(hudAmmoCur, w.ammo);
+  setHudText(hudAmmoRes, w.reserve === Infinity ? "∞" : w.reserve);
 
   const gCount = Math.max(0, engine.player.grenades || 0);
-  hudGrenadeCount.textContent = `x${gCount}`;
+  setHudText(hudGrenadeCount, `x${gCount}`);
   hudGrenadeBox.classList.toggle("empty", gCount === 0);
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
@@ -787,8 +792,8 @@ function updateHUD(dt) {
   if (isReloading) {
     const leftSec = Math.max(0, engine.weapons.reloadTimer);
     const pct = Math.min(100, Math.max(0, (1 - leftSec / w.reloadTime) * 100));
-    hudReloadHint.textContent = `RELOADING ${leftSec.toFixed(1)}s`;
-    reloadHudText.textContent = `换弹中 ${leftSec.toFixed(1)}s`;
+    setHudText(hudReloadHint, `RELOADING ${leftSec.toFixed(1)}s`);
+    setHudText(reloadHudText, `换弹中 ${leftSec.toFixed(1)}s`);
     reloadFill.style.width = `${pct}%`;
   }
 
@@ -796,7 +801,7 @@ function updateHUD(dt) {
     const unlocked = engine.weapons.isUnlocked(idx);
     slot.classList.toggle("active", idx === engine.weapons.currentIdx);
     slot.classList.toggle("locked", !unlocked);
-    slot.textContent = unlocked ? WEAPON_SLOT_LABELS[idx] : `${idx + 1}. 🔒 LOCKED`;
+    setHudText(slot, unlocked ? WEAPON_SLOT_LABELS[idx] : `${idx + 1}. 🔒 LOCKED`);
   });
 
   assets.drawPortrait(portraitCtx, engine.player.hp, engine.player.hurtTimer, engine.player.fireTimer);
@@ -805,6 +810,8 @@ function updateHUD(dt) {
 
 let lastTime = performance.now();
 let menuOrbitAngle = 0.4;
+let lastRenderedState;
+let lastViewportRevision;
 function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
@@ -837,11 +844,13 @@ function loop(now) {
       cz + Math.sin(menuOrbitAngle) * rz
     );
     engine.camera.lookAt(cx, 1.8, cz);
-    engine.render();
-  } else {
-    engine.render();
+    engine.render(engine.movers.length > 0);
+  } else if (state !== lastRenderedState || engine.viewportRevision !== lastViewportRevision) {
+    engine.render(false);
   }
 
+  lastRenderedState = state;
+  lastViewportRevision = engine.viewportRevision;
   requestAnimationFrame(loop);
 }
 
