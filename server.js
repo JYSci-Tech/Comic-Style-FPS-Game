@@ -5,6 +5,7 @@ import { networkInterfaces } from "node:os";
 import { WebSocket, WebSocketServer } from "ws";
 import { LanMatch } from "./lan-match.js";
 import { ROOM_SIZE } from "./js/lan-rules.js";
+import { COMIC_LEVELS } from "./js/levels.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? "0.0.0.0";
@@ -84,6 +85,7 @@ function sendRoom(room) {
     type: "room",
     code: room.code,
     mode: room.mode,
+    mapIndex: room.mapIndex ?? 0,
     host: room.players[0].id,
     playing: Boolean(room.match),
     note: room.note || "",
@@ -137,7 +139,7 @@ function handleMessage(socket, message, now) {
     if (!name) return error("请输入玩家昵称。");
     if (message.type === "create") {
       if (!["pvp", "coop"].includes(message.mode)) return error("请选择游戏模式。");
-      const created = { code: roomCode(), mode: message.mode, players: [], match: null };
+      const created = { code: roomCode(), mode: message.mode, mapIndex: 0, players: [], match: null };
       rooms.set(created.code, created);
       join(socket, created, name);
     } else {
@@ -159,10 +161,18 @@ function handleMessage(socket, message, now) {
     leave(socket);
     send(socket, { type: "left" });
   } else if (room.players[0] === socket.player) {
-    if (message.type === "start" && !match) {
+    if (message.type === "select_map" && !match && room.mode === "pvp") {
+      const idx = Number(message.mapIndex);
+      if (Number.isInteger(idx) && idx >= 0 && idx < COMIC_LEVELS.length) {
+        room.mapIndex = idx;
+        room.note = "";
+        sendRoom(room);
+      }
+    } else if (message.type === "start" && !match) {
       if (room.players.length < 2) return error("至少需要两名玩家。");
       room.match = new LanMatch(room.mode, room.players);
-      room.match.start();
+      const startLevel = room.mode === "pvp" ? (room.mapIndex ?? 0) : 0;
+      room.match.start(startLevel);
       sendRoom(room);
     } else if (message.type === "next" && match?.phase === "cleared") {
       match.start(match.level + 1, true);

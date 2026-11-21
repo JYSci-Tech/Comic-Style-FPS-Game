@@ -175,7 +175,7 @@
       <div class="aaa-brand">
         <div class="aaa-kicker">
           <span class="aaa-pub">ANTIGRAVITY COMICS · 3D EDITION</span>
-          <span class="aaa-issue-pill">7 ISSUES · CO-OP &amp; PVP</span>
+          <span class="aaa-issue-pill">9 ISSUES · CO-OP &amp; PVP</span>
         </div>
         <h1 class="aaa-logo">INK &amp; IRON</h1>
         <div class="aaa-tagline">「墨水与钢铁 3D」—— 赛璐璐墨线犯罪之城</div>
@@ -254,6 +254,14 @@
         <div id="lan-room" class="hidden">
           <h3 id="lan-room-mode"></h3>
           <label class="lan-field">邀请链接 <input id="lan-invite" type="text" readonly></label>
+          <div id="lan-map-picker" class="lan-map-picker hidden">
+            <div class="lan-map-header">
+              <span class="lan-map-title">对战地图 · SELECT ARENA</span>
+              <span id="lan-map-current" class="lan-map-current"></span>
+              <button id="lan-map-random" class="lan-map-random" type="button">🎲 随机地图</button>
+            </div>
+            <div id="lan-map-grid" class="lan-map-grid" role="radiogroup" aria-label="选择对战地图"></div>
+          </div>
           <ul id="lan-members" class="lan-members"></ul>
           <div class="cover-actions">
             <button id="lan-start" class="comic-btn primary" type="button">开始游戏</button>

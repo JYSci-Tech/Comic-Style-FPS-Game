@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-// A small mip bias suppresses distant hatch shimmer while keeping the nearby ink linework.
-const filteredMap = THREE.ShaderChunk.map_fragment.replace("texture2D( map, vMapUv )", "texture2D( map, vMapUv, 0.4 )");
+// Crisp negative mip bias (-0.25) + 16x anisotropy keeps 1024×1024 building ink linework razor-sharp up close and at oblique angles.
+const filteredMap = THREE.ShaderChunk.map_fragment.replace("texture2D( map, vMapUv )", "texture2D( map, vMapUv, -0.25 )");
 function filterComicMap(shader) {
   shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", filteredMap);
 }
@@ -36,6 +36,8 @@ export class ComicAssets {
       chinatown: this._makeCanvasTex(256, 256, (ctx) => this._drawChinatownFacade(ctx, 256), true),
       container: this._makeCanvasTex(256, 256, (ctx) => this._drawHarborContainerFacade(ctx, 256), true),
       marbleBank: this._makeCanvasTex(256, 256, (ctx) => this._drawMarbleBankFacade(ctx, 256), true),
+      nightMarket: this._makeCanvasTex(256, 256, (ctx) => this._drawNightMarketFacade(ctx, 256), true),
+      oldQuarter: this._makeCanvasTex(256, 256, (ctx) => this._drawOldQuarterFacade(ctx, 256), true),
     };
 
     this.wallMaterials = {
@@ -51,6 +53,8 @@ export class ComicAssets {
       11: this.toonMat({ map: this.textures.chinatown }),
       12: this.toonMat({ map: this.textures.container }),
       13: this.toonMat({ map: this.textures.marbleBank }),
+      14: this.toonMat({ map: this.textures.nightMarket }),
+      15: this.toonMat({ map: this.textures.oldQuarter }),
       viaduct: this.toonMat({ map: this.textures.viaduct }),
       sidewalk: this.toonMat({ map: this.textures.sidewalk }),
     };
@@ -98,20 +102,19 @@ export class ComicAssets {
     return lines;
   }
 
-  _makeCanvasTex(w, h, drawFn, repeat = false) {
-    // 使用 2x 超采样 (512×512) 矢量渲染 + 8x 各向异性过滤，确保近距离观察路面与边墙依然锐利清晰
-    const scale = 2;
+  _makeCanvasTex(w, h, drawFn, repeat = false, supersample = 4) {
+    // 4x 超采样 (1024×1024) 矢量渲染 + 16x 各向异性过滤，近距离紧贴建筑墙面也清晰锐利
     const c = document.createElement("canvas");
-    c.width = w * scale;
-    c.height = h * scale;
+    c.width = w * supersample;
+    c.height = h * supersample;
     const ctx = c.getContext("2d");
-    ctx.scale(scale, scale);
+    ctx.scale(supersample, supersample);
     drawFn(ctx, w, h);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 8;
+    tex.anisotropy = 16;
     if (repeat) {
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;
@@ -150,96 +153,158 @@ export class ComicAssets {
   }
 
   _drawBrick(ctx, s) {
-    ctx.fillStyle = "#c94136";
+    // 12 层写实比例错缝红砖墙（带灰缝凹槽、砖面色差、高光倒角与精致网点排线）
+    ctx.fillStyle = "#5c2420";
     ctx.fillRect(0, 0, s, s);
-    const rows = 4;
+    const rows = 12;
+    const cols = 6;
     const rh = s / rows;
+    const bw = s / cols;
+    const palette = ["#d44838", "#c43a2e", "#e05a44", "#b53328", "#cf4436"];
     for (let r = 0; r < rows; r++) {
-      const off = (r % 2) * (s / 4);
-      for (let col = -1; col < 3; col++) {
-        const bx = col * (s / 2) + off;
+      const off = (r % 2) * (bw * 0.5);
+      for (let col = -1; col <= cols; col++) {
+        const bx = col * bw + off;
         const by = r * rh;
-        ctx.fillStyle = (r + col) % 2 === 0 ? "#df523e" : "#bd362c";
-        ctx.fillRect(bx + 4, by + 4, s / 2 - 8, rh - 8);
-        ctx.fillStyle = "#ff8566";
-        ctx.fillRect(bx + 8, by + 8, s / 2 - 18, 8);
-        ctx.strokeStyle = "#101016";
-        ctx.lineWidth = 6;
-        ctx.strokeRect(bx, by, s / 2, rh);
+        const seed = Math.abs(r * 17 + col * 31);
+        ctx.fillStyle = palette[seed % palette.length];
+        ctx.fillRect(bx + 1.8, by + 1.8, bw - 3.6, rh - 3.6);
+        // 砖块上沿高光与下沿暗面
+        ctx.fillStyle = "rgba(255,190,155,0.28)";
+        ctx.fillRect(bx + 2.5, by + 2.5, bw - 5.5, 2.4);
+        ctx.fillStyle = "rgba(18,10,14,0.24)";
+        ctx.fillRect(bx + 2.5, by + rh - 4.2, bw - 5.0, 2.0);
+        // 细锐墨线勾边
+        ctx.strokeStyle = "#161218";
+        ctx.lineWidth = 1.6;
+        ctx.strokeRect(bx + 0.8, by + 0.8, bw - 1.6, rh - 1.6);
       }
     }
-    this._halftone(ctx, 0, s * 0.55, s, s * 0.45, "rgba(10,10,18,0.24)", 12, 3);
-    this._hatch(ctx, 0, s * 0.78, s, s * 0.22, "rgba(10,10,18,0.45)", 11);
+    this._halftone(ctx, 0, s * 0.62, s, s * 0.38, "rgba(10,10,18,0.2)", 8, 1.8);
+    this._hatch(ctx, 0, s * 0.82, s, s * 0.18, "rgba(10,10,18,0.38)", 9);
   }
 
   _drawNeonStore(ctx, s) {
-    ctx.fillStyle = "#26365c";
+    // 现代霓虹玻璃幕墙摩天楼（4×3 精密金属竖挺玻璃网格 + 室内百叶剪影 + 对角天空倒影 + 霓虹腰线）
+    ctx.fillStyle = "#182440";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 0, s, s, "rgba(0,229,255,0.16)", 14, 3.2);
+    this._halftone(ctx, 0, 0, s, s, "rgba(0,229,255,0.1)", 10, 1.8);
 
-    ctx.fillStyle = "#ffe01b";
-    ctx.fillRect(28, 36, 200, 124);
-    ctx.fillStyle = "#00e5ff";
-    ctx.fillRect(40, 48, 176, 100);
-    ctx.fillStyle = "rgba(255,255,255,0.75)";
-    ctx.beginPath();
-    ctx.moveTo(56, 148);
-    ctx.lineTo(106, 48);
-    ctx.lineTo(132, 48);
-    ctx.lineTo(82, 148);
-    ctx.closePath();
-    ctx.fill();
+    const cols = 4;
+    const rows = 3;
+    const padX = 12;
+    const padY = 14;
+    const gap = 8;
+    const winW = (s - padX * 2 - gap * (cols - 1)) / cols;
+    const winH = (186 - padY - gap * (rows - 1)) / rows;
 
-    ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 8;
-    ctx.strokeRect(28, 36, 200, 124);
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const wx = padX + c * (winW + gap);
+        const wy = padY + r * (winH + gap);
+        const lit = (r * 5 + c * 3) % 3 !== 0;
+        ctx.fillStyle = lit ? ((r + c) % 2 === 0 ? "#00d8f5" : "#44ebff") : "#233c63";
+        ctx.fillRect(wx, wy, winW, winH);
 
-    ctx.fillStyle = "#ff2a44";
+        // 玻璃内部百叶横纹与室内剪影
+        ctx.fillStyle = lit ? "rgba(14,32,62,0.18)" : "rgba(8,14,28,0.35)";
+        for (let by = wy + 6; by < wy + winH * 0.55; by += 6) {
+          ctx.fillRect(wx + 2, by, winW - 4, 2);
+        }
+        // 锐利斜向天空高光反光条
+        ctx.fillStyle = "rgba(255,255,255,0.48)";
+        ctx.beginPath();
+        ctx.moveTo(wx + 4, wy + winH - 2);
+        ctx.lineTo(wx + winW * 0.45, wy + 2);
+        ctx.lineTo(wx + winW * 0.65, wy + 2);
+        ctx.lineTo(wx + winW * 0.2, wy + winH - 2);
+        ctx.closePath();
+        ctx.fill();
+
+        // 窗框铝挺与墨线
+        ctx.strokeStyle = "#101016";
+        ctx.lineWidth = 3.2;
+        ctx.strokeRect(wx, wy, winW, winH);
+        ctx.strokeStyle = "#7a94bd";
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(wx + 2.5, wy + 2.5, winW - 5, winH - 5);
+      }
+    }
+
+    // 下部金属裙墙与双色霓虹装饰光带
+    ctx.fillStyle = "#263352";
     ctx.fillRect(0, 198, s, 58);
+    ctx.fillStyle = "#ff2a44";
+    ctx.fillRect(8, 206, s - 16, 16);
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(8, 226, s - 16, 8);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(8, 206, s - 16, 16);
     ctx.strokeRect(0, 198, s, 58);
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   _drawHazardSteel(ctx, s) {
-    ctx.fillStyle = "#6c7b8b";
+    // 精密铆接工业钢板墙（双开护板 + 散热百叶栅格 + 高光铆钉 + 警示斜纹）
+    ctx.fillStyle = "#5c6a7a";
     ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = "#8a9bac";
-    ctx.fillRect(14, 14, s - 28, 166);
-    this._halftone(ctx, 14, 96, s - 28, 84, "rgba(12,12,18,0.22)", 12, 3);
-
-    ctx.fillStyle = "#111";
-    [28, s - 28].forEach((rx) => {
-      [28, 162].forEach((ry) => {
-        ctx.beginPath();
-        ctx.arc(rx, ry, 7, 0, Math.PI * 2);
-        ctx.fill();
-      });
-    });
+    for (const px of [10, 132]) {
+      ctx.fillStyle = "#7c8d9f";
+      ctx.fillRect(px, 12, 114, 168);
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.fillRect(px + 3, 15, 108, 6);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 3.5;
+      ctx.strokeRect(px, 12, 114, 168);
+      // 散热百叶孔
+      for (let ly = 44; ly < 110; ly += 10) {
+        ctx.fillStyle = "#252c38";
+        ctx.fillRect(px + 18, ly, 78, 5);
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(px + 18, ly + 5, 78, 1.5);
+      }
+      // 四角精密铆钉
+      for (const rx of [px + 10, px + 104]) {
+        for (const ry of [24, 168]) {
+          ctx.fillStyle = "#161a24";
+          ctx.beginPath();
+          ctx.arc(rx, ry, 4.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#c8d6e6";
+          ctx.beginPath();
+          ctx.arc(rx - 1, ry - 1, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    this._halftone(ctx, 10, 118, s - 20, 60, "rgba(12,12,18,0.2)", 9, 1.8);
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 190, s, 66);
+    ctx.rect(0, 192, s, 64);
     ctx.clip();
     ctx.fillStyle = "#ffe01b";
-    ctx.fillRect(0, 190, s, 66);
+    ctx.fillRect(0, 192, s, 64);
     ctx.fillStyle = "#101016";
-    for (let x = -64; x < s + 64; x += 48) {
+    for (let x = -64; x < s + 64; x += 36) {
       ctx.beginPath();
-      ctx.moveTo(x, 190);
-      ctx.lineTo(x + 24, 190);
-      ctx.lineTo(x - 10, s);
-      ctx.lineTo(x - 34, s);
+      ctx.moveTo(x, 192);
+      ctx.lineTo(x + 18, 192);
+      ctx.lineTo(x - 14, s);
+      ctx.lineTo(x - 32, s);
       ctx.closePath();
       ctx.fill();
     }
     ctx.restore();
 
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
     ctx.beginPath();
-    ctx.moveTo(0, 190);
-    ctx.lineTo(s, 190);
+    ctx.moveTo(0, 192);
+    ctx.lineTo(s, 192);
     ctx.stroke();
   }
 
@@ -367,104 +432,167 @@ export class ComicAssets {
   }
 
   _drawComicShop(ctx, s) {
-    // 美式漫画街角商店 / 复古快餐店外墙（红黄遮阳篷 + COMICS! 招牌 + 橱窗海报）
-    ctx.fillStyle = "#1d2747";
+    // 精细美式漫画街角商店 / 复古快餐店外墙（灯泡灯箱招牌 + 12道遮阳篷阴影 + 精绘橱窗漫画封面 + 瓷砖裙墙）
+    ctx.fillStyle = "#1c2646";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 0, s, s, "rgba(255,224,27,0.12)", 14, 3);
+    this._halftone(ctx, 0, 0, s, s, "rgba(255,224,27,0.1)", 10, 1.8);
 
-    // 顶部招牌灯箱
+    // 顶部复古灯泡灯箱招牌
     ctx.fillStyle = "#ffe01b";
-    ctx.fillRect(16, 14, s - 32, 46);
+    ctx.fillRect(14, 12, s - 28, 46);
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 7;
-    ctx.strokeRect(16, 14, s - 32, 46);
+    ctx.lineWidth = 4.5;
+    ctx.strokeRect(14, 12, s - 28, 46);
+    for (let bx = 22; bx <= s - 22; bx += 14) {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(bx, 18, 2.2, 0, Math.PI * 2);
+      ctx.arc(bx, 52, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.fillStyle = "#ff2a44";
-    ctx.font = "900 30px Impact, sans-serif";
+    ctx.font = "900 26px Impact, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("COMICS & DINER", s / 2, 48);
+    ctx.fillText("COMICS & DINER", s / 2, 44);
 
-    // 红白条纹漫画遮阳篷
-    const stripes = 8;
-    const sw = (s - 24) / stripes;
+    // 12 道细条纹遮阳篷与底部投影
+    const stripes = 12;
+    const sw = (s - 20) / stripes;
+    ctx.fillStyle = "rgba(10,10,18,0.4)";
+    ctx.fillRect(10, 98, s - 20, 8);
     for (let i = 0; i < stripes; i++) {
       ctx.fillStyle = i % 2 === 0 ? "#ff2a44" : "#fff5d6";
-      ctx.fillRect(12 + i * sw, 68, sw, 34);
+      ctx.fillRect(10 + i * sw, 64, sw, 34);
       ctx.strokeStyle = "#101016";
-      ctx.lineWidth = 5;
-      ctx.strokeRect(12 + i * sw, 68, sw, 34);
+      ctx.lineWidth = 2.6;
+      ctx.strokeRect(10 + i * sw, 64, sw, 34);
     }
 
-    // 亮青色大橱窗 + 漫画海报陈列
-    ctx.fillStyle = "#00e5ff";
-    ctx.fillRect(22, 112, s - 44, 104);
-    ctx.fillStyle = "#ff2ebd";
-    ctx.fillRect(36, 128, 52, 72);
-    ctx.fillStyle = "#ffe01b";
-    ctx.fillRect(102, 128, 52, 72);
-    ctx.fillStyle = "#38e54d";
-    ctx.fillRect(168, 128, 52, 72);
+    // 精致玻璃大橱窗 + 3 本带标题/爆炸星标的精绘漫画书封面陈列
+    ctx.fillStyle = "#0e223a";
+    ctx.fillRect(18, 106, s - 36, 108);
+    ctx.fillStyle = "#00d8f5";
+    ctx.fillRect(22, 110, s - 44, 100);
+    const covers = [
+      [34, "#ff2ebd", "#ffe01b", "ZAP!"],
+      [102, "#ffe01b", "#ff2a44", "POW!"],
+      [170, "#38e54d", "#1c2646", "INK!"],
+    ];
+    for (const [cx, bg, badge, txt] of covers) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(cx, 122, 52, 74);
+      ctx.fillStyle = badge;
+      ctx.fillRect(cx + 4, 126, 44, 15);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(cx + 6, 146, 40, 32);
+      ctx.fillStyle = "#101016";
+      ctx.font = "900 12px Impact, sans-serif";
+      ctx.fillText(txt, cx + 26, 167);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 3.2;
+      ctx.strokeRect(cx, 122, 52, 74);
+    }
+    // 橱窗斜向玻璃反光
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.beginPath();
+    ctx.moveTo(26, 208);
+    ctx.lineTo(74, 112);
+    ctx.lineTo(94, 112);
+    ctx.lineTo(46, 208);
+    ctx.closePath();
+    ctx.fill();
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(36, 128, 52, 72);
-    ctx.strokeRect(102, 128, 52, 72);
-    ctx.strokeRect(168, 128, 52, 72);
-    ctx.strokeRect(22, 112, s - 44, 104);
+    ctx.lineWidth = 4.5;
+    ctx.strokeRect(18, 106, s - 36, 108);
 
-    // 底部踢脚墙
-    ctx.fillStyle = "#c94136";
-    ctx.fillRect(0, 222, s, 34);
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    // 底部釉面小方砖踢脚墙
+    ctx.fillStyle = "#b8362c";
+    ctx.fillRect(0, 220, s, 36);
+    ctx.strokeStyle = "rgba(16,16,22,0.55)";
+    ctx.lineWidth = 1.6;
+    for (let tx = 0; tx < s; tx += 16) {
+      ctx.strokeRect(tx, 220, 16, 18);
+      ctx.strokeRect(tx, 238, 16, 18);
+    }
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   _drawApartmentFacade(ctx, s) {
-    // 纽约/美漫街区装饰艺术公寓楼立面（暖黄褐砖墙 + 双联漫画窗 + 防火梯剪影）
-    ctx.fillStyle = "#d4882a";
+    // 纽约褐石公寓楼高精细立面（错缝石块砌体 + 窗楣石托 + 六格推拉窗与百叶窗 + 铸铁护栏细节）
+    ctx.fillStyle = "#bd7422";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, s * 0.45, s, s * 0.55, "rgba(14,14,20,0.22)", 12, 3);
+    // 细腻褐石砖块砌缝
+    const rows = 10;
+    const rh = s / rows;
+    for (let r = 0; r < rows; r++) {
+      const off = (r % 2) * 24;
+      for (let x = -24; x < s + 24; x += 48) {
+        ctx.fillStyle = (r + Math.floor(x / 48)) % 2 === 0 ? "#cf822b" : "#c07522";
+        ctx.fillRect(x + off + 1.5, r * rh + 1.5, 45, rh - 3);
+        ctx.strokeStyle = "rgba(24,16,10,0.45)";
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(x + off, r * rh, 48, rh);
+      }
+    }
+    this._halftone(ctx, 0, s * 0.55, s, s * 0.45, "rgba(14,14,20,0.16)", 9, 1.8);
 
-    // 横向石材腰线
-    ctx.fillStyle = "#f7b733";
-    ctx.fillRect(0, 16, s, 18);
-    ctx.fillRect(0, 124, s, 14);
-    ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(0, 16, s, 18);
-    ctx.strokeRect(0, 124, s, 14);
+    // 雕花石材腰线
+    for (const ly of [14, 124]) {
+      ctx.fillStyle = "#f2ba49";
+      ctx.fillRect(0, ly, s, 14);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillRect(0, ly + 2, s, 3);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 3.5;
+      ctx.strokeRect(0, ly, s, 14);
+    }
 
-    // 4 扇漫画高对比公寓窗户
+    // 4 扇精致六格推拉公寓窗（带石材窗楣、窗台、百叶与玻璃反光）
     const winPositions = [
-      [28, 44], [144, 44],
-      [28, 148], [144, 148],
+      [26, 40], [146, 40],
+      [26, 150], [146, 150],
     ];
     winPositions.forEach(([wx, wy], idx) => {
-      ctx.fillStyle = idx % 2 === 0 ? "#ffe01b" : "#00e5ff";
-      ctx.fillRect(wx, wy, 84, 68);
-      ctx.fillStyle = "rgba(255,255,255,0.65)";
-      ctx.fillRect(wx + 8, wy + 8, 22, 52);
+      // 顶部石窗楣与底部石窗台
+      ctx.fillStyle = "#e8c484";
+      ctx.fillRect(wx - 6, wy - 8, 96, 8);
+      ctx.fillRect(wx - 6, wy + 70, 96, 8);
       ctx.strokeStyle = "#101016";
-      ctx.lineWidth = 7;
-      ctx.strokeRect(wx, wy, 84, 68);
-      // 十字窗框
+      ctx.lineWidth = 2.6;
+      ctx.strokeRect(wx - 6, wy - 8, 96, 8);
+      ctx.strokeRect(wx - 6, wy + 70, 96, 8);
+
+      ctx.fillStyle = idx % 2 === 0 ? "#ffd94a" : "#42d9f5";
+      ctx.fillRect(wx, wy, 84, 70);
+      // 上半百叶窗横纹
+      ctx.fillStyle = "rgba(20,24,38,0.22)";
+      for (let by = wy + 5; by < wy + 30; by += 5) {
+        ctx.fillRect(wx + 3, by, 78, 2);
+      }
+      // 斜向玻璃反光
+      ctx.fillStyle = "rgba(255,255,255,0.52)";
+      ctx.fillRect(wx + 7, wy + 6, 16, 58);
+
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(wx, wy, 84, 70);
+      // 六格木窗棂
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
-      ctx.moveTo(wx + 42, wy);
-      ctx.lineTo(wx + 42, wy + 68);
-      ctx.moveTo(wx, wy + 34);
-      ctx.lineTo(wx + 84, wy + 34);
+      ctx.moveTo(wx + 28, wy);
+      ctx.lineTo(wx + 28, wy + 70);
+      ctx.moveTo(wx + 56, wy);
+      ctx.lineTo(wx + 56, wy + 70);
+      ctx.moveTo(wx, wy + 35);
+      ctx.lineTo(wx + 84, wy + 35);
       ctx.stroke();
     });
 
-    // 黑色铸铁防火梯斜线剪影
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(22, 114);
-    ctx.lineTo(234, 114);
-    ctx.moveTo(64, 114);
-    ctx.lineTo(188, 228);
-    ctx.stroke();
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   _drawStreetGraffiti(ctx, s) {
@@ -568,139 +696,407 @@ export class ComicAssets {
   }
 
   _drawChinatownFacade(ctx, s) {
-    // ISSUE #2 落日唐人街专属立面：朱红漆墙 + 鎏金雕花窗格 + 翡翠绿飞檐腰线 + 霓虹牌匾
-    ctx.fillStyle = "#9e1b24";
+    // ISSUE #2 落日唐人街超清立面：朱红漆木壁板 + 翡翠琉璃筒瓦檐 + 鎏金雕花回字窗格 + 霓虹牌匾
+    ctx.fillStyle = "#961820";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 0, s, s, "rgba(20,6,10,0.26)", 12, 2.8);
+    // 竖向朱红漆木板拼接细线
+    ctx.strokeStyle = "rgba(28,6,8,0.42)";
+    ctx.lineWidth = 1.6;
+    for (let x = 16; x < s; x += 16) {
+      ctx.beginPath();
+      ctx.moveTo(x, 42);
+      ctx.lineTo(x, s);
+      ctx.stroke();
+    }
+    this._halftone(ctx, 0, 120, s, 136, "rgba(20,6,10,0.2)", 9, 1.8);
 
-    // 翡翠绿与金黄琉璃檐口带
-    ctx.fillStyle = "#00a86b";
-    ctx.fillRect(0, 10, s, 22);
+    // 翡翠绿琉璃瓦带（逐片筒瓦脊线）与金黄檐带
+    ctx.fillStyle = "#009e64";
+    ctx.fillRect(0, 8, s, 24);
+    for (let tx = 0; tx < s; tx += 16) {
+      ctx.fillStyle = "#00c47c";
+      ctx.fillRect(tx + 3, 10, 6, 20);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(tx, 8, 16, 24);
+    }
     ctx.fillStyle = "#ffe01b";
     ctx.fillRect(0, 32, s, 10);
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(0, 10, s, 22);
+    ctx.lineWidth = 3.5;
     ctx.strokeRect(0, 32, s, 10);
 
-    // 顶部霓虹金匾
+    // 顶部霓虹金匾（内嵌回纹金边）
     ctx.fillStyle = "#16121e";
-    ctx.fillRect(26, 52, s - 52, 46);
+    ctx.fillRect(22, 50, s - 44, 46);
     ctx.strokeStyle = "#ffe01b";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(26, 52, s - 52, 46);
+    ctx.lineWidth = 4;
+    ctx.strokeRect(22, 50, s - 44, 46);
+    ctx.strokeStyle = "#ff4d4d";
+    ctx.lineWidth = 1.8;
+    ctx.strokeRect(28, 56, s - 56, 34);
     ctx.fillStyle = "#ffdf2b";
-    ctx.font = "900 28px Impact, sans-serif";
+    ctx.font = "900 26px Impact, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("DRAGON ARCADE", s / 2, 85);
+    ctx.fillText("DRAGON ARCADE", s / 2, 82);
 
-    // 左右两扇中式鎏金花格亮窗
-    [24, 140].forEach((wx) => {
+    // 左右两扇精细中式鎏金回字花格亮窗
+    [22, 142].forEach((wx) => {
       ctx.fillStyle = "#ffae19";
-      ctx.fillRect(wx, 114, 92, 110);
+      ctx.fillRect(wx, 110, 92, 118);
       ctx.fillStyle = "#fff3c4";
-      ctx.fillRect(wx + 10, 124, 30, 88);
+      ctx.fillRect(wx + 8, 118, 30, 102);
       ctx.strokeStyle = "#101016";
-      ctx.lineWidth = 6;
-      ctx.strokeRect(wx, 114, 92, 110);
-      ctx.strokeRect(wx + 14, 128, 64, 82);
+      ctx.lineWidth = 4;
+      ctx.strokeRect(wx, 110, 92, 118);
+      ctx.lineWidth = 2.4;
+      ctx.strokeRect(wx + 12, 122, 68, 94);
+      ctx.strokeRect(wx + 24, 134, 44, 70);
       ctx.beginPath();
-      ctx.moveTo(wx + 46, 114);
-      ctx.lineTo(wx + 46, 224);
+      ctx.moveTo(wx + 46, 110);
+      ctx.lineTo(wx + 46, 228);
       ctx.moveTo(wx, 169);
       ctx.lineTo(wx + 92, 169);
       ctx.stroke();
     });
 
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   _drawHarborContainerFacade(ctx, s) {
-    // ISSUE #4 布鲁克林海港专属立面：深海蓝/锈橙波纹集装箱钢板与港口货运卷帘门
-    ctx.fillStyle = "#1f4e78";
+    // ISSUE #4 布鲁克林海港超清集装箱立面：密排波纹钢肋 + 螺栓条 + 货运编号钢印 + 精密钢制卷帘门
+    ctx.fillStyle = "#1b466e";
     ctx.fillRect(0, 0, s, s);
 
-    // 竖向集装箱波纹压槽
-    for (let x = 16; x < s - 12; x += 24) {
-      ctx.fillStyle = (x / 24) % 2 === 0 ? "#2a6496" : "#173c5e";
-      ctx.fillRect(x, 16, 16, s - 32);
+    for (let x = 8; x < s - 8; x += 14) {
+      ctx.fillStyle = (x / 14) % 2 === 0 ? "#2a6496" : "#153758";
+      ctx.fillRect(x, 12, 10, s - 24);
+      ctx.fillStyle = "rgba(255,255,255,0.16)";
+      ctx.fillRect(x + 1, 12, 2.5, s - 24);
       ctx.strokeStyle = "#101016";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, 16, 16, s - 32);
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(x, 12, 10, s - 24);
     }
-    this._halftone(ctx, 0, 120, s, 136, "rgba(10,12,18,0.28)", 12, 2.8);
+    this._halftone(ctx, 0, 120, s, 136, "rgba(10,12,18,0.22)", 9, 1.8);
 
-    // 货运钢印编号牌
+    // 货运钢印编号牌（带铆钉与副标题）
     ctx.fillStyle = "#ff7a00";
-    ctx.fillRect(24, 34, s - 48, 56);
+    ctx.fillRect(20, 28, s - 40, 62);
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(24, 34, s - 48, 56);
+    ctx.lineWidth = 4;
+    ctx.strokeRect(20, 28, s - 40, 62);
     ctx.fillStyle = "#101016";
-    ctx.font = "900 30px Impact, sans-serif";
+    ctx.font = "900 26px Impact, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("HARBOR PIER 44", s / 2, 73);
+    ctx.fillText("HARBOR PIER 44", s / 2, 60);
+    ctx.font = "900 13px Impact, sans-serif";
+    ctx.fillText("CARGO SECTOR B-08 · MAX 32T", s / 2, 80);
 
-    // 下部钢制货运卷帘门
-    ctx.fillStyle = "#5c6778";
-    ctx.fillRect(32, 112, s - 64, 136);
-    ctx.strokeRect(32, 112, s - 64, 136);
-    for (let y = 128; y < 244; y += 18) {
+    // 下部精密钢制货运卷帘门（密排压槽 + 锁扣把手）
+    ctx.fillStyle = "#5c687a";
+    ctx.fillRect(30, 108, s - 60, 140);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(30, 108, s - 60, 140);
+    for (let y = 118; y < 246; y += 10) {
+      ctx.fillStyle = "rgba(255,255,255,0.16)";
+      ctx.fillRect(32, y + 1, s - 64, 2.5);
+      ctx.strokeStyle = "#181d26";
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.moveTo(32, y);
-      ctx.lineTo(s - 32, y);
+      ctx.moveTo(30, y);
+      ctx.lineTo(s - 30, y);
       ctx.stroke();
     }
+    ctx.fillStyle = "#ffe01b";
+    ctx.fillRect(s / 2 - 22, 226, 44, 10);
+    ctx.strokeRect(s / 2 - 22, 226, 44, 10);
 
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   _drawMarbleBankFacade(ctx, s) {
-    // ISSUE #6 大都会金融广场专属立面：古典象牙白大理石柱廊 + 黄金装饰艺术腰线 + 拱形高窗
-    ctx.fillStyle = "#e8e2d5";
+    // ISSUE #6 大都会古典白大理石金融大厦超清立面：精砌象牙石材 + 凹槽罗马壁柱 + 黄金装饰几何腰带 + 拱形格栅高窗
+    ctx.fillStyle = "#e6dfd0";
     ctx.fillRect(0, 0, s, s);
-    this._halftone(ctx, 0, 130, s, 126, "rgba(30,28,42,0.14)", 14, 2.4);
+    // 精细大理石石块分缝
+    ctx.strokeStyle = "rgba(62,56,48,0.28)";
+    ctx.lineWidth = 1.5;
+    for (let y = 40; y < s; y += 26) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(s, y);
+      ctx.stroke();
+    }
+    this._halftone(ctx, 0, 140, s, 116, "rgba(30,28,42,0.1)", 10, 1.8);
 
-    // 黄金 Art-Deco 浮雕横梁
+    // 黄金 Art-Deco 几何浮雕横梁
     ctx.fillStyle = "#d4af37";
-    ctx.fillRect(0, 14, s, 24);
+    ctx.fillRect(0, 12, s, 26);
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(0, 14, s, 24);
+    ctx.lineWidth = 3.5;
+    ctx.strokeRect(0, 12, s, 26);
+    ctx.strokeStyle = "#fff1b5";
+    ctx.lineWidth = 1.8;
+    for (let gx = 10; gx < s - 10; gx += 20) {
+      ctx.strokeRect(gx, 18, 12, 14);
+    }
 
-    // 两侧古典凹槽大理石壁柱
-    [12, s - 44].forEach((px) => {
+    // 两侧古典竖向凹槽大理石罗马壁柱
+    [10, s - 46].forEach((px) => {
       ctx.fillStyle = "#f7f4ec";
-      ctx.fillRect(px, 38, 32, s - 46);
+      ctx.fillRect(px, 38, 36, s - 44);
+      for (let fx = px + 6; fx < px + 32; fx += 8) {
+        ctx.fillStyle = "#d9d1c0";
+        ctx.fillRect(fx, 44, 4, s - 56);
+      }
       ctx.strokeStyle = "#101016";
-      ctx.lineWidth = 5;
-      ctx.strokeRect(px, 38, 32, s - 46);
+      ctx.lineWidth = 3.5;
+      ctx.strokeRect(px, 38, 36, s - 44);
     });
 
-    // 中央深青色金融大厦高窗与金色窗格
+    // 中央深青色金融大厦拱顶高窗与精密金色窗棂
     ctx.fillStyle = "#142a46";
-    ctx.fillRect(58, 54, s - 116, 178);
-    ctx.fillStyle = "#00e5ff";
-    ctx.fillRect(68, 64, s - 136, 158);
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.fillRect(76, 72, 26, 142);
-    ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 7;
-    ctx.strokeRect(58, 54, s - 116, 178);
-    ctx.strokeStyle = "#d4af37";
-    ctx.lineWidth = 5;
+    ctx.fillRect(58, 52, s - 116, 184);
+    ctx.fillStyle = "#00d8f5";
+    ctx.fillRect(66, 60, s - 132, 168);
+    ctx.fillStyle = "rgba(255,255,255,0.52)";
     ctx.beginPath();
-    ctx.moveTo(s / 2, 54);
-    ctx.lineTo(s / 2, 232);
-    ctx.moveTo(58, 142);
-    ctx.lineTo(s - 58, 142);
+    ctx.moveTo(70, 224);
+    ctx.lineTo(122, 62);
+    ctx.lineTo(148, 62);
+    ctx.lineTo(96, 224);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 4.5;
+    ctx.strokeRect(58, 52, s - 116, 184);
+
+    ctx.strokeStyle = "#d4af37";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (const vx of [s * 0.39, s * 0.5, s * 0.61]) {
+      ctx.moveTo(vx, 54);
+      ctx.lineTo(vx, 234);
+    }
+    for (const hy of [100, 144, 188]) {
+      ctx.moveTo(60, hy);
+      ctx.lineTo(s - 60, hy);
+    }
     ctx.stroke();
 
     ctx.strokeStyle = "#101016";
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, s - 8, s - 8);
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
+  }
+
+  _drawNightMarketFacade(ctx, s) {
+    // ISSUE #7 霓虹九龙城夜市超清立面：16×16 釉面马赛克瓷砖 + 密集百叶防盗窗 + 空调外机扇叶 + 双色竖排霓虹灯牌 + 精细卷闸门
+    ctx.fillStyle = "#222742";
+    ctx.fillRect(0, 0, s, s);
+    // 精细九龙城小瓷砖网格
+    for (let ty = 0; ty < s; ty += 16) {
+      for (let tx = 0; tx < s; tx += 16) {
+        const shade = ((tx / 16 + ty / 16) % 3 === 0) ? "#2c3354" : ((tx / 16) % 2 === 0 ? "#242a46" : "#1f243d");
+        ctx.fillStyle = shade;
+        ctx.fillRect(tx + 1, ty + 1, 14, 14);
+      }
+    }
+    this._halftone(ctx, 0, 120, s, 136, "rgba(8,8,18,0.22)", 9, 1.8);
+
+    // 顶部霓虹荧光灯管条 + 金属支架
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(10, 14, s - 20, 9);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(14, 17, s - 28, 3);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(10, 14, s - 20, 9);
+
+    // 左侧暖黄百叶防盗窗
+    ctx.fillStyle = "#ffae19";
+    ctx.fillRect(18, 38, 88, 86);
+    ctx.fillStyle = "#fff1b5";
+    ctx.fillRect(24, 44, 34, 74);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(18, 38, 88, 86);
+    ctx.lineWidth = 2.2;
+    for (let y = 52; y < 122; y += 12) {
+      ctx.beginPath();
+      ctx.moveTo(18, y);
+      ctx.lineTo(106, y);
+      ctx.stroke();
+    }
+    for (const bx of [40, 62, 84]) {
+      ctx.beginPath();
+      ctx.moveTo(bx, 38);
+      ctx.lineTo(bx, 124);
+      ctx.stroke();
+    }
+
+    // 窗下银灰空调外机箱（带扇叶、散热栅与铜管）
+    ctx.fillStyle = "#8a96ad";
+    ctx.fillRect(22, 134, 80, 44);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(22, 134, 80, 44);
+    ctx.fillStyle = "#1b2030";
+    ctx.beginPath();
+    ctx.arc(48, 156, 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#6c7890";
+    ctx.lineWidth = 1.6;
+    for (let gy = 142; gy <= 170; gy += 6) {
+      ctx.beginPath();
+      ctx.moveTo(70, gy);
+      ctx.lineTo(96, gy);
+      ctx.stroke();
+    }
+
+    // 右侧高饱和品红/霓虹青双色竖排夜市大招牌
+    ctx.fillStyle = "#140e24";
+    ctx.fillRect(126, 34, 110, 146);
+    ctx.strokeStyle = "#ff2ebd";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(126, 34, 110, 146);
+    ctx.strokeStyle = "#00e5ff";
+    ctx.lineWidth = 1.8;
+    ctx.strokeRect(132, 40, 98, 134);
+
+    ctx.fillStyle = "#ff2ebd";
+    ctx.fillRect(140, 48, 82, 38);
+    ctx.fillStyle = "#ffe01b";
+    ctx.font = "900 24px Impact, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("24H", 181, 76);
+
+    ctx.fillStyle = "#00e5ff";
+    ctx.font = "900 22px Impact, sans-serif";
+    ctx.fillText("RAMEN", 181, 118);
+    ctx.fillStyle = "#ff5c93";
+    ctx.fillText("ARCADE", 181, 150);
+    ctx.fillStyle = "#ffe01b";
+    ctx.font = "900 12px Impact, sans-serif";
+    ctx.fillText("KOWLOON DISTRICT", 181, 168);
+
+    // 底部精密防盗卷闸门
+    ctx.fillStyle = "#48526e";
+    ctx.fillRect(14, 190, s - 28, 58);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 3.5;
+    ctx.strokeRect(14, 190, s - 28, 58);
+    ctx.lineWidth = 1.6;
+    for (let y = 200; y < 246; y += 8) {
+      ctx.beginPath();
+      ctx.moveTo(14, y);
+      ctx.lineTo(s - 14, y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
+  }
+
+  _drawOldQuarterFacade(ctx, s) {
+    // ISSUE #8 老城运河与大巴扎超清立面：错缝石灰岩切块 + 逐片陶土筒瓦檐口 + 拱心石玻璃长窗 + 锻铁雕花阳台
+    ctx.fillStyle = "#d4ad79";
+    ctx.fillRect(0, 0, s, s);
+    // 精细错缝石灰岩砌块
+    const rows = 9;
+    const rh = (s - 46) / rows;
+    for (let r = 0; r < rows; r++) {
+      const off = (r % 2) * 26;
+      for (let x = -26; x < s + 26; x += 52) {
+        ctx.fillStyle = (r + Math.floor(x / 52)) % 2 === 0 ? "#dec090" : "#cfa571";
+        ctx.fillRect(x + off + 1.5, 46 + r * rh + 1.5, 49, rh - 3);
+        ctx.strokeStyle = "rgba(58,36,16,0.34)";
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(x + off, 46 + r * rh, 52, rh);
+      }
+    }
+    this._halftone(ctx, 0, 140, s, 116, "rgba(72,42,16,0.14)", 10, 1.8);
+
+    // 顶部陶土筒瓦檐口（逐片瓦脊阴影）
+    ctx.fillStyle = "#b84a2e";
+    ctx.fillRect(0, 6, s, 26);
+    for (let tx = 0; tx < s; tx += 16) {
+      ctx.fillStyle = "#d65d3b";
+      ctx.fillRect(tx + 3, 8, 7, 22);
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 1.8;
+      ctx.strokeRect(tx, 6, 16, 26);
+    }
+    ctx.fillStyle = "#f2dec0";
+    ctx.fillRect(0, 32, s, 12);
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 3.2;
+    ctx.strokeRect(0, 32, s, 12);
+
+    // 两扇欧式复古拱形玻璃长窗（带顶拱石 + 精细十字格栅 + 锻铁雕花阳台）
+    [24, 144].forEach((wx) => {
+      ctx.fillStyle = "#1f3a4d";
+      ctx.beginPath();
+      ctx.arc(wx + 44, 102, 44, Math.PI, 0);
+      ctx.lineTo(wx + 88, 214);
+      ctx.lineTo(wx, 214);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#ffdf8e";
+      ctx.beginPath();
+      ctx.arc(wx + 44, 104, 36, Math.PI, 0);
+      ctx.lineTo(wx + 80, 204);
+      ctx.lineTo(wx + 8, 204);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(255,255,255,0.48)";
+      ctx.fillRect(wx + 15, 104, 16, 94);
+
+      ctx.strokeStyle = "#101016";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(wx + 44, 102, 44, Math.PI, 0);
+      ctx.lineTo(wx + 88, 214);
+      ctx.lineTo(wx, 214);
+      ctx.closePath();
+      ctx.stroke();
+
+      // 拱心楔石
+      ctx.fillStyle = "#f2dec0";
+      ctx.fillRect(wx + 37, 52, 14, 14);
+      ctx.lineWidth = 2.2;
+      ctx.strokeRect(wx + 37, 52, 14, 14);
+
+      // 窗格精细木棂
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(wx + 44, 62);
+      ctx.lineTo(wx + 44, 214);
+      ctx.moveTo(wx + 8, 122);
+      ctx.lineTo(wx + 80, 122);
+      ctx.moveTo(wx + 8, 158);
+      ctx.lineTo(wx + 80, 158);
+      ctx.stroke();
+
+      // 铸铁雕花阳台护栏
+      ctx.fillStyle = "#161822";
+      ctx.fillRect(wx - 4, 182, 96, 6);
+      for (let bx = wx + 2; bx <= wx + 84; bx += 10) {
+        ctx.fillRect(bx, 182, 3, 30);
+      }
+      ctx.fillRect(wx - 4, 210, 96, 6);
+    });
+
+    ctx.strokeStyle = "#101016";
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, s - 5, s - 5);
   }
 
   // 根据关卡地图网格一次性烘焙整张街区「柏油马路 + 双黄中心线 + 斑马线 + 水泥人行道」高清贴图（仅 1 次 Draw Call！）

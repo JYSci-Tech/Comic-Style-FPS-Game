@@ -4,9 +4,30 @@ export class ComicAudio {
     this.ctx = null;
     this.enabled = true;
     this.noiseBuffer = null;
+    this._bindUnlockGestures();
+  }
+
+  _bindUnlockGestures() {
+    if (typeof window === "undefined") return;
+    const unlock = () => {
+      if (!this.enabled) return;
+      this.init();
+    };
+    for (const evt of ["pointerdown", "mousedown", "keydown", "touchstart", "click"]) {
+      window.addEventListener(evt, unlock, { capture: true, passive: true });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && this.enabled && this.ctx && this.ctx.state !== "running") {
+        this.ctx.resume().catch(() => {});
+      }
+    });
   }
 
   init() {
+    if (this.ctx && this.ctx.state === "closed") {
+      this.ctx = null;
+      this.noiseBuffer = null;
+    }
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;

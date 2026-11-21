@@ -2010,3 +2010,156 @@ html, body {
   65% { transform: translateY(-4px) scale(1.04); }
   100% { transform: translateY(0) scale(1); }
 }
+
+
+/* ================= 局域网 PvP 地图选择器 ================= */
+.lan-modal {
+  width: min(760px, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.lan-map-picker {
+  margin: 12px 0 14px;
+  padding: 10px 12px;
+  background: #171824;
+  border: 4px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  text-align: left;
+}
+
+.lan-map-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.lan-map-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: var(--yellow);
+}
+
+.lan-map-current {
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  background: #272b42;
+  border: 2px solid var(--ink);
+  padding: 2px 9px;
+}
+
+.lan-map-random {
+  margin-left: auto;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  background: var(--cyan);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.1s ease;
+}
+
+.lan-map-random:hover {
+  transform: translate(-1px, -2px);
+  background: var(--yellow);
+}
+
+.lan-map-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 248px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+@media (max-width: 640px) {
+  .lan-map-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.lan-map-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-left: 7px solid var(--map-accent, var(--yellow));
+  box-shadow: 3px 3px 0 var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.1s ease;
+}
+
+.lan-map-card:not(:disabled):hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 var(--ink);
+  background: #fffdf5;
+}
+
+.lan-map-card.selected {
+  background: var(--yellow);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--red), 5px 5px 0 var(--ink);
+}
+
+.lan-map-card:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.lan-map-card.selected:disabled {
+  opacity: 1;
+}
+
+.lan-map-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.lan-map-card-top b {
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--red);
+  letter-spacing: 0.5px;
+}
+
+.lan-map-card-top em {
+  font-style: normal;
+  font-weight: 800;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--ink);
+  color: #fff;
+}
+
+.lan-map-card-cn {
+  font-weight: 900;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.lan-map-card-en {
+  font-family: var(--font-display);
+  font-size: 10px;
+  color: #4a4858;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
