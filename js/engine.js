@@ -4,7 +4,7 @@ import { StreetScenery } from "./scenery.js";
 import { WeaponSystem3D } from "./weapons.js";
 
 const MAX_RENDER_PIXELS = 2_600_000;
-const SHADOW_INTERVAL_MS = 1000 / 30;
+const SHADOW_INTERVAL_MS = 1000 / 20;
 
 export function createPlayer() {
   return {
@@ -55,10 +55,10 @@ export class ComicFPS3DEngine {
       this.renderer.shadowMap.autoUpdate = false;
     }
 
-    // 场景与正确比例的透视相机
+    // 场景与正确比例的透视相机（远裁剪面 320m，完整覆盖 40×28 巨型街区与天际线）
     this.scene = new THREE.Scene();
     this.baseFov = 72;
-    this.camera = new THREE.PerspectiveCamera(this.baseFov, 16 / 9, 0.08, 220);
+    this.camera = new THREE.PerspectiveCamera(this.baseFov, 16 / 9, 0.08, 320);
     this.camera.rotation.order = "YXZ";
     this.scene.add(this.camera);
 
@@ -100,6 +100,11 @@ export class ComicFPS3DEngine {
     this.popups = [];
     this.hitTargets = []; // 用于射线检测的所有可击中网格
     this.particleGeometry = glCanvas ? new THREE.BoxGeometry(0.22, 0.22, 0.22) : null;
+    this._tracerGeo = glCanvas ? new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2) : null;
+    this._projGeo = new THREE.SphereGeometry(1, 8, 8);
+    this._shockwaveGeo = glCanvas ? new THREE.TorusGeometry(0.6, 0.14, 8, 24) : null;
+    this._fxMatCache = new Map();
+    this._tmpProjVec = new THREE.Vector3();
 
     this.score = 0;
     this.kills = 0;
@@ -137,11 +142,37 @@ export class ComicFPS3DEngine {
     this.viewportRevision = (this.viewportRevision || 0) + 1;
   }
 
+  _freezeStatic(obj) {
+    obj.updateMatrix();
+    obj.matrixAutoUpdate = false;
+    return obj;
+  }
+
+  _getFxMaterial(color) {
+    let mat = this._fxMatCache.get(color);
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({ color });
+      mat.userData.cachedFx = true;
+      this._fxMatCache.set(color, mat);
+    }
+    return mat;
+  }
+
   _clearLevel() {
     if (this.renderer) {
-      const sharedGeometries = new Set([this.particleGeometry, ...Object.values(this.streetScenery.shapes)]);
+      const sharedGeometries = new Set([
+        this.particleGeometry,
+        this._tracerGeo,
+        this._projGeo,
+        this._shockwaveGeo,
+        ...Object.values(this.streetScenery.shapes),
+      ]);
       const sharedMaterials = new Set([
-        this.assets.inkMaterial, this.assets.edgeMaterial, this.streetScenery.solidMaterial,
+        this.assets.inkMaterial,
+        this.assets.edgeMaterial,
+        this.streetScenery.solidMaterial,
+        this.streetScenery.emissiveMaterial,
+        ...this._fxMatCache.values(),
         ...Object.values(this.assets.wallMaterials),
       ]);
       const geometries = new Set();
@@ -161,7 +192,13 @@ export class ComicFPS3DEngine {
       for (const { mesh } of this.props) {
         if (mesh && !mesh.parent) mesh.traverse(collect);
       }
-      for (const geometry of geometries) geometry.dispose();
+      for (const geometry of geometries) {
+        if (geometry.userData?.edgeGeometries) {
+          for (const edgeGeo of geometry.userData.edgeGeometries.values()) edgeGeo.dispose();
+          geometry.userData.edgeGeometries.clear();
+        }
+        geometry.dispose();
+      }
       for (const material of materials) material.dispose();
     }
     this.levelRoot.clear();
@@ -199,15 +236,20 @@ export class ComicFPS3DEngine {
 
     // 构建街区 3D 微凸起人行道 + 路沿石 + 连通道路标线，以及合并后的独立街区建筑
     this.sidewalkGrid = null;
+    this.roadGrid = null;
     if (lvl.streetTheme) {
       this._build3DRoadsAndSidewalks(lvl);
     }
     this._buildLevelArchitecture(lvl);
 
-    // 街区主题细节：街角漫画路灯、消防栓与各街区专属地标（唐人街牌楼 / 海港高架铁道 / 大都会绿荫与柱廊）
-    if (this.renderer && lvl.streetTheme) {
-      this._buildStreetBlockFurniture();
-      this._buildDistrictLandmarks(lvl);
+    // 街区主题细节：路灯、红绿灯、报刊亭、候车亭、露天咖啡座、杂物与各街区专属地标；非街区室内/天台/实验室同样构建合批精细环境
+    if (this.renderer) {
+      if (lvl.streetTheme) {
+        this._buildStreetBlockFurniture(lvl);
+        this._buildDistrictLandmarks(lvl);
+      } else {
+        this._buildArenaEnvironmentDetails(lvl);
+      }
     }
 
     // 漫画城市天际线 & 大太阳背景
@@ -256,7 +298,8 @@ export class ComicFPS3DEngine {
   _buildLevelLightingAndFloor(lvl, worldW, worldH) {
     const maxSpan = Math.max(worldW, worldH);
     this.scene.background = new THREE.Color(lvl.skyColor);
-    this.scene.fog = new THREE.FogExp2(lvl.fogColor, maxSpan >= CELL_SIZE * 20 ? 0.0085 : 0.014);
+    const fogDensity = maxSpan >= CELL_SIZE * 34 ? 0.0062 : maxSpan >= CELL_SIZE * 20 ? 0.0085 : 0.014;
+    this.scene.fog = new THREE.FogExp2(lvl.fogColor, fogDensity);
 
     this.levelRoot.add(new THREE.HemisphereLight(lvl.ambientColor, 0x262038, 1.15));
     const sun = new THREE.DirectionalLight(0xffffff, 1.65);
@@ -281,6 +324,7 @@ export class ComicFPS3DEngine {
     const floor = new THREE.Mesh(geometry, this.assets.toonMat({ map: this.assets.textures[lvl.floorTex] }));
     floor.position.set(worldW / 2, 0, worldH / 2);
     floor.receiveShadow = true;
+    this._freezeStatic(floor);
     this.levelRoot.add(floor);
   }
 
@@ -383,36 +427,43 @@ export class ComicFPS3DEngine {
   _buildComicSkyline(worldW, worldH, lvl) {
     const cx = worldW / 2;
     const cz = worldH / 2;
-    const bMat = new THREE.MeshBasicMaterial({ color: lvl.skylineColor });
-    const winMat = new THREE.MeshBasicMaterial({ color: 0xffe01b });
-    const winMat2 = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
+    const scenery = this.streetScenery;
 
-    for (let i = 0; i < 28; i++) {
-      const ang = (i / 28) * Math.PI * 2;
-      const dist = Math.max(worldW, worldH) * 0.72 + (i % 3) * 10;
+    // 所有天际线远景摩天楼与发光窗带全部合批进 StreetScenery（零额外 Mesh / Draw Call！）
+    for (let i = 0; i < 32; i++) {
+      const ang = (i / 32) * Math.PI * 2;
+      const dist = Math.max(worldW, worldH) * 0.72 + (i % 3) * 11;
       const bw = 7 + (i % 4) * 3;
-      const bh = 18 + ((i * 7) % 26);
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bw), bMat);
-      mesh.position.set(cx + Math.cos(ang) * dist, bh / 2 - 2, cz + Math.sin(ang) * dist);
-      this.assets.addCreaseLines(mesh);
-
-      // 漫画发光窗户条
-      const wStrip = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.65, 1.4, bw + 0.2),
-        i % 2 === 0 ? winMat : winMat2
+      const bh = 18 + ((i * 7) % 28);
+      const tx = cx + Math.cos(ang) * dist;
+      const tz = cz + Math.sin(ang) * dist;
+      scenery?.addEmissive("box", lvl.skylineColor, [tx, bh / 2 - 2, tz], [bw, bh, bw]);
+      scenery?.addEmissive(
+        "box",
+        i % 2 === 0 ? 0xffe01b : 0x00e5ff,
+        [tx, bh * 0.72 - 2, tz],
+        [bw * 0.68, 1.4, bw + 0.25]
       );
-      wStrip.position.y = bh * 0.25;
-      mesh.add(wStrip);
-      this.levelRoot.add(mesh);
+      if (i % 3 === 0) {
+        scenery?.addEmissive(
+          "box",
+          i % 6 === 0 ? 0xff2ebd : 0xffe01b,
+          [tx, bh * 0.48 - 2, tz],
+          [bw + 0.25, 1.1, bw * 0.62]
+        );
+      }
     }
 
-    // 巨大漫画赛璐璐太阳
+    // 巨大漫画赛璐璐太阳（随地图尺寸自动外推，避免落入超大街区内部）
+    const sunDist = Math.max(55, Math.max(worldW, worldH) * 0.68);
+    const sunRadius = Math.max(9, Math.max(worldW, worldH) * 0.085);
     const sun = new THREE.Mesh(
-      new THREE.SphereGeometry(9, 16, 16),
+      new THREE.SphereGeometry(sunRadius, 16, 16),
       new THREE.MeshBasicMaterial({ color: lvl.sunColor })
     );
-    sun.position.set(cx + 55, 42, cz - 55);
+    sun.position.set(cx + sunDist, Math.max(42, sunDist * 0.62), cz - sunDist);
     this.assets.addOutline(sun, 1.08);
+    this._freezeStatic(sun);
     this.levelRoot.add(sun);
   }
 
@@ -475,6 +526,7 @@ export class ComicFPS3DEngine {
       }
     }
     this.sidewalkGrid = sidewalkGrid;
+    this.roadGrid = roadGrid;
 
     if (!this.renderer) return;
 
@@ -512,6 +564,7 @@ export class ComicFPS3DEngine {
         const slab = new THREE.Mesh(slabGeo, sidewalkMat);
         slab.position.set(wx, sidewalkH / 2, wz);
         slab.receiveShadow = true;
+        this._freezeStatic(slab);
         this.levelRoot.add(slab);
       }
     }
@@ -521,7 +574,11 @@ export class ComicFPS3DEngine {
     const curbW = 0.24;
     // Let the road-facing face extend beyond the slab so the two vertical faces never coincide.
     const curbInset = curbW * 0.5 - 0.045;
-    const curbColor = lvl.districtStyle === "chinatown" ? 0xd9a84e : 0xc8d0e0;
+    const curbColor =
+      lvl.districtStyle === "chinatown" ? 0xd9a84e :
+      lvl.districtStyle === "nightmarket" ? 0x5c6482 :
+      lvl.districtStyle === "oldquarter" ? 0xd8c19a :
+      0xc8d0e0;
 
     // 水平方向路沿石合并
     for (let z = 1; z < H - 1; z++) {
@@ -695,7 +752,6 @@ export class ComicFPS3DEngine {
     const crateH = 1.65;
     const baseWallH = 4.8;
     const crateGeo = new THREE.BoxGeometry(CELL_SIZE * 0.78, crateH, CELL_SIZE * 0.78);
-    const trimMat = this.assets.toonMat({ color: 0x16161e });
     const vehicleCollisionMat = new THREE.MeshBasicMaterial({ visible: false });
 
     // 1. 先生成低矮掩体（6: 木箱掩体，10: 街头漫画出租车/警车/货车掩体）
@@ -713,16 +769,29 @@ export class ComicFPS3DEngine {
           box.receiveShadow = true;
           this.assets.addCreaseLines(box);
           box.userData = { kind: "wall" };
+          this._freezeStatic(box);
           this.levelRoot.add(box);
           this.hitTargets.push(box);
         } else if (cell === 10) {
-          const vType = (x + z) % 3; // 0: 黄色漫画出租车  1: 红白复古快递货车  2: 蓝白漫画警车
+          const vType = (x * 3 + z * 5) % 4; // 0: 黄色出租车  1: 红白货车  2: 蓝白警车  3: 青金双门跑车
           const hitBox = new THREE.Mesh(crateGeo, vehicleCollisionMat);
           hitBox.position.set(wx, baseElev + crateH / 2, wz);
           hitBox.userData = { kind: "wall" };
+          this._freezeStatic(hitBox);
           this.levelRoot.add(hitBox);
           this.hitTargets.push(hitBox);
-          this.streetScenery?.addVehicle(vType, wx, baseElev, wz);
+          // 根据相邻街道走向自动旋转车辆方向，并叠加微小的自然停靠角度偏移
+          const roadL = this.roadGrid?.[z]?.[x - 1] === 1 || this.map[z]?.[x - 1] === 0;
+          const roadR = this.roadGrid?.[z]?.[x + 1] === 1 || this.map[z]?.[x + 1] === 0;
+          const roadU = this.roadGrid?.[z - 1]?.[x] === 1 || this.map[z - 1]?.[x] === 0;
+          const roadD = this.roadGrid?.[z + 1]?.[x] === 1 || this.map[z + 1]?.[x] === 0;
+          const horizScore = (roadL ? 1 : 0) + (roadR ? 1 : 0);
+          const vertScore = (roadU ? 1 : 0) + (roadD ? 1 : 0);
+          const baseYaw = horizScore > vertScore
+            ? (((x + z) % 2 === 0) ? Math.PI / 2 : -Math.PI / 2)
+            : (((x * 3 + z) % 2 === 0) ? 0 : Math.PI);
+          const organicJitter = ((((x * 19 + z * 37) % 11) - 5) / 5) * 0.07;
+          this.streetScenery?.addVehicle(vType, wx, baseElev, wz, baseYaw + organicJitter);
         }
       }
     }
@@ -784,17 +853,14 @@ export class ComicFPS3DEngine {
           wall.receiveShadow = true;
           this.assets.addCreaseLines(wall);
           wall.userData = { kind: "wall" };
+          this._freezeStatic(wall);
           this.levelRoot.add(wall);
           this.hitTargets.push(wall);
 
-          if (this.renderer) {
-            const cap = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.14, 0.24, bd + 0.14), trimMat);
-            cap.position.set(wx, guardH + 0.12, wz);
-            this.levelRoot.add(cap);
-          }
+          this.streetScenery?.addSolid("box", 0x16161e, [wx, guardH + 0.12, wz], [bw + 0.14, 0.24, bd + 0.14]);
         } else if (lvl.streetTheme) {
-          // 街区内部：生成外观、层高、屋顶截然不同的独立建筑（带精确世界 UV 平铺）
-          this._spawnDistinctCityBuilding(cell, x, z, wCells, dCells, wx, wz, bw, bd, trimMat);
+          // 街区内部：生成外观、层高、屋顶截然不同的独立建筑（装饰部件全合批进 StreetScenery）
+          this._spawnDistinctCityBuilding(cell, x, z, wCells, dCells, wx, wz, bw, bd);
         } else {
           // 室内/天台关卡：合并后的标准高速墙体 + 精确世界 UV 平铺
           const geo = new THREE.BoxGeometry(bw, baseWallH, bd);
@@ -806,34 +872,35 @@ export class ComicFPS3DEngine {
           wall.receiveShadow = true;
           this.assets.addCreaseLines(wall);
           wall.userData = { kind: "wall" };
+          this._freezeStatic(wall);
           this.levelRoot.add(wall);
           this.hitTargets.push(wall);
 
-          if (this.renderer) {
-            const trim = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.14, 0.28, bd + 0.14), trimMat);
-            trim.position.set(wx, baseWallH + 0.14, wz);
-            this.levelRoot.add(trim);
-          }
+          this.streetScenery?.addSolid("box", 0x16161e, [wx, baseWallH + 0.14, wz], [bw + 0.14, 0.28, bd + 0.14]);
         }
       }
     }
   }
 
-  // 生成 9 种外观、层高、屋顶结构截然不同的美式漫画街区独立建筑
-  _spawnDistinctCityBuilding(cell, gx, gz, wCells, dCells, wx, wz, bw, bd, trimMat) {
-    const variant = (gx * 7 + gz * 13) % 2;
+  // 生成 11 种外观、层高、屋顶结构截然不同的美式漫画街区独立建筑（所有装饰屋顶全合批进 StreetScenery，极致低 Draw Call）
+  _spawnDistinctCityBuilding(cell, gx, gz, wCells, dCells, wx, wz, bw, bd) {
+    const hash = Math.abs(gx * 31 + gz * 57 + wCells * 13 + dCells * 19);
+    const variant = hash % 2;
+    const organicStep = ((hash % 5) - 2) * 0.65; // -1.3m ~ +1.3m 非规则高低错落
     const heightByType = {
-      7: 5.6, // 街角漫画书店 / 复古快餐店
-      9: 6.8, // 街头波普涂鸦仓库 / 汽修厂
-      11: 8.6 + variant * 1.4, // 唐人街朱红鎏金飞檐楼阁
-      12: 7.4 + variant * 1.6, // 海港波纹集装箱货运大楼
-      1: 9.0 + variant * 1.2, // 老城红砖联排楼
-      4: 10.4, // 复古红砖钟楼 / 啤酒厂
-      13: 11.4, // 大都会古典白大理石罗马柱银行
-      8: 12.6 + variant * 2.0, // 三层褐石水塔公寓楼
-      2: 17.5 + variant * 3.5, // 现代霓虹玻璃摩天大楼
+      7: 5.6 + variant * 0.9, // 街角漫画书店 / 复古快餐店
+      9: 6.8 + variant * 1.1, // 街头波普涂鸦仓库 / 汽修厂
+      11: 8.6 + variant * 1.6, // 唐人街朱红鎏金飞檐楼阁
+      12: 7.4 + variant * 1.8, // 海港波纹集装箱货运大楼
+      1: 9.0 + variant * 1.4, // 老城红砖联排楼
+      4: 10.6 + variant * 1.2, // 复古红砖钟楼 / 啤酒厂
+      13: 11.6 + variant * 1.2, // 大都会古典白大理石罗马柱银行
+      14: 10.4 + (hash % 4) * 2.2, // 九龙城高密度霓虹夜市叠层筒楼
+      15: 8.8 + (hash % 3) * 1.8, // 老城运河拱廊石灰岩陶瓦街楼
+      8: 12.6 + variant * 2.2, // 三层褐石水塔公寓楼
+      2: 17.5 + (hash % 3) * 3.2, // 现代霓虹玻璃摩天大楼
     };
-    const bh = heightByType[cell] || 8.5;
+    const bh = Math.max(5.2, (heightByType[cell] || 8.5) + organicStep);
     const mat = this.assets.wallMaterials[cell] || this.assets.wallMaterials[1];
 
     const bodyGeo = new THREE.BoxGeometry(bw, bh, bd);
@@ -844,258 +911,407 @@ export class ComicFPS3DEngine {
     building.receiveShadow = true;
     this.assets.addCreaseLines(building);
     building.userData = { kind: "wall" };
+    this._freezeStatic(building);
     this.levelRoot.add(building);
     this.hitTargets.push(building);
 
     if (!this.renderer) return;
 
-    // 屋顶墨线挑檐
-    const cornice = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.24, 0.34, bd + 0.24), trimMat);
-    cornice.position.set(wx, bh + 0.17, wz);
-    this.levelRoot.add(cornice);
+    const sc = this.streetScenery;
+    const solid = (shape, color, x, y, z, sx, sy, sz) => sc?.addSolid(shape, color, [x, y, z], [sx, sy, sz]);
+    const glow = (shape, color, x, y, z, sx, sy, sz) => sc?.addEmissive(shape, color, [x, y, z], [sx, sy, sz]);
+
+    // 底部勒脚石材压边 + 屋顶墨线挑檐（全合批零新增 Mesh）
+    solid("box", 0x262836, wx, 0.28, wz, bw + 0.16, 0.24, bd + 0.16);
+    solid("box", 0x16161e, wx, bh + 0.17, wz, bw + 0.24, 0.34, bd + 0.24);
     this._addFacadeRelief(cell, gx, gz, wCells, dCells, bh);
+    sc?.addRooftopDetail(hash % 4, wx, bh + 0.34, wz, bw, bd);
 
-    // 按建筑类型添加标志性立体屋顶与门头结构
+    // 按建筑类型添加合批立体屋顶、招牌与门头结构
     if (cell === 7) {
-      // 【类型 7：漫画书店 & 复古快餐店】外挑红黄遮阳雨棚 + 屋顶阶梯霓虹大招牌
-      const awning = new THREE.Mesh(
-        new THREE.BoxGeometry(bw + 0.85, 0.42, bd + 0.85),
-        this.assets.toonMat({ color: variant === 0 ? 0xff2a44 : 0xffe01b })
-      );
-      awning.position.set(wx, 3.15, wz);
-      this.assets.addCreaseLines(awning);
-      this.levelRoot.add(awning);
-
-      const signBase = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.75, 1.85, 0.55),
-        this.assets.toonMat({ color: variant === 0 ? 0xffe01b : 0xff2ebd })
-      );
-      signBase.position.set(wx, bh + 1.25, wz);
-      this.assets.addCreaseLines(signBase);
-      this.levelRoot.add(signBase);
+      // 【类型 7：漫画书店 & 复古快餐店】外挑红黄遮阳雨棚 + 发光屋顶大招牌
+      solid("box", variant === 0 ? 0xff2a44 : 0xffe01b, wx, 3.15, wz, bw + 0.85, 0.42, bd + 0.85);
+      solid("box", 0x16161e, wx, 3.38, wz, bw + 0.90, 0.08, bd + 0.90);
+      glow("box", variant === 0 ? 0xffe01b : 0xff2ebd, wx, bh + 1.25, wz, bw * 0.75, 1.85, 0.55);
+      solid("box", 0x16161e, wx, bh + 1.25, wz, bw * 0.78, 1.98, 0.42);
     } else if (cell === 11) {
-      // 【类型 11：唐人街东方飞檐楼阁】双层翡翠绿/金黄出挑飞檐攒尖屋顶 + 朱红灯笼柱
-      const eave1 = new THREE.Mesh(
-        new THREE.BoxGeometry(bw + 1.3, 0.55, bd + 1.3),
-        this.assets.toonMat({ color: 0x00a86b })
-      );
-      eave1.position.set(wx, bh + 0.55, wz);
-      this.assets.addCreaseLines(eave1);
-
-      const upperPavilion = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.66, 2.2, bd * 0.66),
-        this.assets.toonMat({ color: 0xb81d24 })
-      );
-      upperPavilion.position.set(wx, bh + 1.9, wz);
-      this.assets.addCreaseLines(upperPavilion);
-
-      const eave2 = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.82, 0.5, bd * 0.82),
-        this.assets.toonMat({ color: 0xffae19 })
-      );
-      eave2.position.set(wx, bh + 3.25, wz);
-      this.assets.addCreaseLines(eave2);
-      this.levelRoot.add(eave1, upperPavilion, eave2);
+      // 【类型 11：唐人街东方飞檐楼阁】双层翡翠绿/金黄出挑飞檐攒尖屋顶
+      solid("box", 0x00a86b, wx, bh + 0.55, wz, bw + 1.3, 0.55, bd + 1.3);
+      solid("box", 0xb81d24, wx, bh + 1.9, wz, bw * 0.66, 2.2, bd * 0.66);
+      solid("box", 0xffae19, wx, bh + 3.25, wz, bw * 0.82, 0.5, bd * 0.82);
+      solid("pyramid", 0x00a86b, wx, bh + 4.2, wz, bw * 0.68, 1.45, bd * 0.68);
     } else if (cell === 12) {
-      // 【类型 12：布鲁克林海港货运集装箱大楼】屋顶错落叠放的彩色集装箱与斜拉悬臂吊架
-      const c1 = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.72, 2.4, Math.min(3.6, bd * 0.55)),
-        this.assets.toonMat({ color: variant === 0 ? 0xff7a00 : 0xd92638 })
-      );
-      c1.position.set(wx - bw * 0.08, bh + 1.5, wz);
-      this.assets.addCreaseLines(c1);
-
-      const boom = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 0.55, bd + 2.6),
-        this.assets.toonMat({ color: 0xffe01b })
-      );
-      boom.position.set(wx + bw * 0.25, bh + 3.1, wz);
-      this.assets.addCreaseLines(boom);
-      this.levelRoot.add(c1, boom);
+      // 【类型 12：布鲁克林海港货运集装箱大楼】屋顶彩色集装箱与斜拉悬臂吊架
+      solid("box", variant === 0 ? 0xff7a00 : 0xd92638, wx - bw * 0.08, bh + 1.5, wz, bw * 0.72, 2.4, Math.min(3.6, bd * 0.55));
+      solid("box", 0xffe01b, wx + bw * 0.25, bh + 3.1, wz, 0.55, 0.55, bd + 2.6);
+      solid("box", 0x222634, wx + bw * 0.25, bh + 1.6, wz, 0.65, 2.7, 0.65);
     } else if (cell === 13) {
-      // 【类型 13：大都会古典白大理石银行大厦】台阶式黄金三角山墙屋顶 + 古典穹顶
-      const pediment = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.86, 1.35, bd * 0.86),
-        this.assets.toonMat({ color: 0xf5efe2 })
-      );
-      pediment.position.set(wx, bh + 0.95, wz);
-      this.assets.addCreaseLines(pediment);
-
-      const goldDome = new THREE.Mesh(
-        new THREE.SphereGeometry(Math.min(bw, bd) * 0.28, 12, 10),
-        this.assets.toonMat({ color: 0xffcf33 })
-      );
-      goldDome.position.set(wx, bh + 1.9, wz);
-      this.assets.addOutline(goldDome, 1.06);
-      this.levelRoot.add(pediment, goldDome);
+      // 【类型 13：大都会古典白大理石银行大厦】台阶式黄金三角山墙屋顶 + 古典金穹顶
+      solid("box", 0xf5efe2, wx, bh + 0.95, wz, bw * 0.86, 1.35, bd * 0.86);
+      const domeD = Math.min(bw, bd) * 0.56;
+      solid("sphere", 0xffcf33, wx, bh + 1.9, wz, domeD, domeD * 0.85, domeD);
+      glow("cylinder", 0xffe875, wx, bh + 1.9 + domeD * 0.55, wz, 0.24, 1.4, 0.24);
     } else if (cell === 8) {
       // 【类型 8：三层褐石公寓楼】中层石材腰线 + 屋顶阁楼出口 + 纽约复古木水塔
-      const belt = new THREE.Mesh(
-        new THREE.BoxGeometry(bw + 0.18, 0.28, bd + 0.18),
-        this.assets.toonMat({ color: 0xf7b733 })
-      );
-      belt.position.set(wx, bh * 0.52, wz);
-      this.levelRoot.add(belt);
-
-      const penthouse = new THREE.Mesh(
-        new THREE.BoxGeometry(Math.min(3.2, bw * 0.45), 2.1, Math.min(3.2, bd * 0.45)),
-        this.assets.toonMat({ color: 0x9c5221 })
-      );
-      penthouse.position.set(wx - bw * 0.18, bh + 1.2, wz - bd * 0.15);
-      this.assets.addCreaseLines(penthouse);
-      this.levelRoot.add(penthouse);
-
-      const tank = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.1, 1.1, 2.1, 10),
-        this.assets.toonMat({ color: 0xb86b2b })
-      );
-      tank.position.set(wx + bw * 0.18, bh + 1.5, wz + bd * 0.15);
-      this.assets.addOutline(tank, 1.06);
-      const roof = new THREE.Mesh(
-        new THREE.ConeGeometry(1.28, 0.95, 10),
-        this.assets.toonMat({ color: 0x22222c })
-      );
-      roof.position.set(wx + bw * 0.18, bh + 3.0, wz + bd * 0.15);
-      this.assets.addOutline(roof, 1.06);
-      this.levelRoot.add(tank, roof);
+      solid("box", 0xf7b733, wx, bh * 0.52, wz, bw + 0.18, 0.28, bd + 0.18);
+      solid("box", 0x9c5221, wx - bw * 0.18, bh + 1.2, wz - bd * 0.15, Math.min(3.2, bw * 0.45), 2.1, Math.min(3.2, bd * 0.45));
+      solid("cylinder", 0xb86b2b, wx + bw * 0.18, bh + 1.5, wz + bd * 0.15, 2.2, 2.1, 2.2);
+      solid("cone", 0x22222c, wx + bw * 0.18, bh + 3.0, wz + bd * 0.15, 2.56, 0.95, 2.56);
     } else if (cell === 2) {
-      // 【类型 2：现代霓虹玻璃摩天大楼】帝国大厦式二段退台塔冠 + 发光霓虹尖塔
+      // 【类型 2：现代霓虹玻璃摩天大楼】帝国大厦式二段退台塔冠 + 发光霓虹腰带与尖塔
       const crownH = 3.6;
-      const crown = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.68, crownH, bd * 0.68),
-        this.assets.toonMat({ color: 0x16284c })
-      );
-      crown.position.set(wx, bh + 0.34 + crownH / 2, wz);
-      this.assets.addCreaseLines(crown);
-
-      const neonBand = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.72, 0.45, bd * 0.72),
-        new THREE.MeshBasicMaterial({ color: 0x00e5ff })
-      );
-      neonBand.position.set(wx, bh + 0.34 + crownH, wz);
-
-      const spire = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.26, 4.2, 8),
-        new THREE.MeshBasicMaterial({ color: 0xffe01b })
-      );
-      spire.position.set(wx, bh + crownH + 2.4, wz);
-      this.levelRoot.add(crown, neonBand, spire);
+      solid("box", 0x16284c, wx, bh + 0.34 + crownH / 2, wz, bw * 0.68, crownH, bd * 0.68);
+      glow("box", 0x00e5ff, wx, bh + 0.34 + crownH, wz, bw * 0.72, 0.45, bd * 0.72);
+      glow("cylinder", 0xffe01b, wx, bh + crownH + 2.4, wz, 0.36, 4.2, 0.36);
     } else if (cell === 9) {
-      // 【类型 9：街头涂鸦红砖仓库/车库】工业钢结构采光天窗与银色空调风柜
-      const skylight = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.62, 1.1, bd * 0.52),
-        this.assets.toonMat({ color: 0x7f8c9a })
-      );
-      skylight.position.set(wx, bh + 0.85, wz);
-      this.assets.addCreaseLines(skylight);
-      this.levelRoot.add(skylight);
+      // 【类型 9：街头涂鸦红砖仓库/车库】工业钢结构采光天窗
+      solid("box", 0x7f8c9a, wx, bh + 0.85, wz, bw * 0.62, 1.1, bd * 0.52);
+      glow("box", 0xa8ecff, wx, bh + 1.44, wz, bw * 0.54, 0.14, bd * 0.42);
     } else if (cell === 4 || cell === 1) {
       // 【类型 4/1：工业钟楼啤酒厂/老街红砖楼】古典山墙压顶 + 工业高耸砖烟囱
-      const parapet = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.82, 1.25, bd * 0.82),
-        this.assets.toonMat({ color: cell === 4 ? 0x5b2c83 : 0x8f2820 })
-      );
-      parapet.position.set(wx, bh + 0.9, wz);
-      this.assets.addCreaseLines(parapet);
-      this.levelRoot.add(parapet);
-
+      solid("box", cell === 4 ? 0x5b2c83 : 0x8f2820, wx, bh + 0.9, wz, bw * 0.82, 1.25, bd * 0.82);
       if (cell === 4) {
-        const stack = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.55, 0.72, 4.6, 10),
-          this.assets.toonMat({ color: 0x9e3328 })
-        );
-        stack.position.set(wx + bw * 0.2, bh + 3.2, wz);
-        this.assets.addOutline(stack, 1.06);
-        this.levelRoot.add(stack);
+        solid("cylinder", 0x9e3328, wx + bw * 0.2, bh + 3.2, wz, 1.35, 4.6, 1.35);
+        solid("cylinder", 0x22222c, wx + bw * 0.2, bh + 5.55, wz, 1.48, 0.26, 1.48);
+      }
+    } else if (cell === 14) {
+      // 【类型 14：霓虹九龙城夜市叠层楼】偏心天台铁皮违建阁楼 + 悬挑双色霓虹雨棚 + 发光霓虹光带
+      solid("box", variant === 0 ? 0xff2ebd : 0x00c8e8, wx, 3.35, wz, bw + 0.95, 0.34, bd + 0.95);
+      solid("box", variant === 0 ? 0x3b4363 : 0x56396b, wx + (variant === 0 ? -bw * 0.16 : bw * 0.16), bh + 1.5, wz + (variant === 0 ? bd * 0.12 : -bd * 0.12), Math.max(2.8, bw * 0.54), 2.35, Math.max(2.8, bd * 0.54));
+      glow("box", variant === 0 ? 0x00e5ff : 0xff2ebd, wx, bh - 0.65, wz, bw + 0.42, 0.32, bd + 0.42);
+    } else if (cell === 15) {
+      // 【类型 15：老城运河拱廊石灰岩陶瓦楼】阶梯式陶土瓦斜顶 + 偏心欧式小钟楼尖顶
+      solid("box", 0xf4e3c1, wx, 3.65, wz, bw + 0.26, 0.32, bd + 0.26);
+      solid("box", variant === 0 ? 0xc44e32 : 0xa63f2a, wx, bh + 0.9, wz, bw * 0.92, 1.15, bd * 0.92);
+      solid("box", variant === 0 ? 0xd8623d : 0xb84c33, wx, bh + 1.95, wz, bw * 0.62, 1.05, bd * 0.62);
+      if (wCells >= 3 || dCells >= 3) {
+        solid("box", 0xe6cfa8, wx - bw * 0.22, bh + 2.6, wz - bd * 0.22, 2.2, 2.8, 2.2);
+        solid("pyramid", 0x265d6e, wx - bw * 0.22, bh + 5.05, wz - bd * 0.22, 2.4, 2.2, 2.4);
       }
     }
   }
 
-  // 为 3 张街区地图构建截然不同的标志性大场景立体地标（营造强烈的场景区分度与新鲜陌生感）
+  // 为全部 6 张街区地图构建截然不同的标志性大场景立体地标（全部合批进 StreetScenery，兼顾超高精细度与极致帧率）
   _buildDistrictLandmarks(lvl) {
-    if (lvl.districtStyle === "chinatown") {
-      // ISSUE #2 落日唐人街：跨越主干道的朱红鎏金中式牌楼与横街霓虹灯笼索道
+    const sc = this.streetScenery;
+    if (!sc) return;
+
+    // 真实垂坠悬链电线 + 精致吊绳挂灯 / 节庆彩旗（绳索按抛物悬链逐段连接，每盏灯均带清晰吊绳）
+    const addHangingCable = (x1, z1, x2, z2, y, colors, style = "lantern") => {
+      const wx1 = x1 * CELL_SIZE;
+      const wz1 = z1 * CELL_SIZE;
+      const wx2 = x2 * CELL_SIZE;
+      const wz2 = z2 * CELL_SIZE;
+      const len = Math.hypot(wx2 - wx1, wz2 - wz1);
+      const yaw = Math.atan2(wx2 - wx1, wz2 - wz1);
+      const sagAmt = Math.min(1.15, Math.max(0.55, len * 0.032));
+      const cableSteps = Math.max(8, Math.ceil(len / 2.2));
+      const pointAt = (t) => [
+        wx1 + (wx2 - wx1) * t,
+        y + 0.55 - Math.sin(t * Math.PI) * sagAmt,
+        wz1 + (wz2 - wz1) * t,
+      ];
+
+      // 两端锚固支架与真实垂坠悬链主缆
+      sc.addSolid("box", 0x181a24, [wx1, y + 0.55, wz1], [0.18, 0.18, 0.18]);
+      sc.addSolid("box", 0x181a24, [wx2, y + 0.55, wz2], [0.18, 0.18, 0.18]);
+      let prev = pointAt(0);
+      for (let s = 1; s <= cableSteps; s++) {
+        const cur = pointAt(s / cableSteps);
+        sc.addSegment(0x161822, prev, cur, 0.055);
+        prev = cur;
+      }
+
+      const count = Math.max(4, Math.floor(len / (style === "bunting" ? 2.1 : 3.1)));
+      for (let i = 1; i < count; i++) {
+        const t = i / count;
+        const [lx, cy, lz] = pointAt(t);
+        const col = colors[(i + Math.floor(x1 + z1)) % colors.length];
+        if (style === "bunting") {
+          // 彩旗直接绑在垂坠主绳上，并穿插短吊绳暖光灯泡
+          sc.addSolid("box", 0x161822, [lx, cy, lz], [0.07, 0.07, 0.07]);
+          sc.addSolid("cone", col, [lx, cy - 0.30, lz], [0.46, 0.54, 0.10], yaw);
+          if (i % 2 === 0) {
+            sc.addHangingLantern(lx, cy, lz, 0.28, 0xffe885, "bulb");
+          }
+        } else {
+          // 每盏挂灯拥有 0.42m ~ 0.68m 错落吊绳长度，真实自然
+          const dropLen = 0.42 + ((i * 7 + Math.floor(x1)) % 3) * 0.13;
+          sc.addHangingLantern(lx, cy, lz, dropLen, col, style);
+        }
+      }
+    };
+
+    if (lvl.districtStyle === "alley") {
+      // ISSUE #1 市中心暗巷：垂坠电线 + 复古工业搪瓷罩吊灯 + 美漫铁艺消防逃生梯
+      addHangingCable(2.0, 4.5, 11.5, 4.0, 5.4, [0xffe01b, 0xff7a2a, 0x00e5ff], "bulb");
+      addHangingCable(3.5, 7.2, 11.5, 8.2, 5.2, [0xff5a2a, 0xffe01b], "bulb");
+      sc.addFireEscape(6.0 * CELL_SIZE, 0.16, 4.95 * CELL_SIZE, Math.PI, 2);
+      sc.addFireEscape(9.95 * CELL_SIZE, 0.16, 4.05 * CELL_SIZE, 0, 1);
+      sc.addFireEscape(8.95 * CELL_SIZE, 0.16, 8.0 * CELL_SIZE, Math.PI, 2);
+    } else if (lvl.districtStyle === "chinatown") {
+      // ISSUE #2 落日唐人街：跨越主干道的朱红鎏金中式牌楼 + 纵横交错的红金垂坠吊绳灯笼索道
       const buildArchway = (wx, wz, span, rotateY = 0) => {
-        const g = new THREE.Group();
-        g.position.set(wx, 0, wz);
-        g.rotation.y = rotateY;
-        const pillarMat = this.assets.toonMat({ color: 0xd92027 });
-        const goldMat = this.assets.toonMat({ color: 0xffcf26 });
-        const jadeMat = this.assets.toonMat({ color: 0x00a86b });
-
-        [-span * 0.5, span * 0.5].forEach((px) => {
-          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 6.2, 10), pillarMat);
-          post.position.set(px, 3.1, 0);
-          this.assets.addOutline(post, 1.07);
-          g.add(post);
-        });
-
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(span + 1.4, 0.85, 0.7), goldMat);
-        beam.position.set(0, 5.7, 0);
-        this.assets.addCreaseLines(beam);
-
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(span + 2.6, 0.65, 1.45), jadeMat);
-        roof.position.set(0, 6.45, 0);
-        this.assets.addCreaseLines(roof);
-        g.add(beam, roof);
-        this.levelRoot.add(g);
+        const part = sc._makePartHelper(wx, 0, wz, rotateY);
+        const c = Math.cos(rotateY);
+        const s = Math.sin(rotateY);
+        for (const px of [-span * 0.5, span * 0.5]) {
+          part("cylinder", 0xd92027, px, 3.1, 0, 0.62, 6.2, 0.62);
+          part("box", 0x5c2020, px, 0.32, 0, 0.96, 0.64, 0.96);
+          // 牌楼横梁两侧吊绳挂灯
+          const lx = wx + (px * 0.72) * c;
+          const lz = wz - (px * 0.72) * s;
+          sc.addHangingLantern(lx, 5.3, lz, 0.45, 0xff2a38, "lantern");
+        }
+        part("box", 0xffcf26, 0, 5.7, 0, span + 1.4, 0.85, 0.72);
+        part("box", 0xd92027, 0, 5.7, 0.4, 3.2, 0.65, 0.14);
+        part("box", 0xffe97d, 0, 5.7, 0.5, 2.5, 0.38, 0.08, 0, true);
+        part("box", 0x00a86b, 0, 6.45, 0, span + 2.6, 0.65, 1.48);
+        part("box", 0xffae19, 0, 6.86, 0, span + 1.8, 0.24, 0.76);
       };
-
-      // 在唐人街南段入口大道与东段弯道架设两座巨型跨街牌楼
       buildArchway(3.0 * CELL_SIZE, 10.5 * CELL_SIZE, 9.2, 0);
       buildArchway(14.5 * CELL_SIZE, 3.0 * CELL_SIZE, 9.2, Math.PI / 2);
+      addHangingCable(3.5, 4.5, 18.5, 4.5, 5.8, [0xff2a38, 0xffcf26, 0xff5a1f], "lantern");
+      addHangingCable(5.0, 9.2, 18.0, 8.8, 5.6, [0xffcf26, 0xff2a38], "lantern");
+      addHangingCable(10.5, 6.5, 10.5, 13.8, 5.5, [0xff2a38, 0xffcf26], "lantern");
     } else if (lvl.districtStyle === "harbor") {
-      // ISSUE #4 布鲁克林海港：贯穿街区上空的钢铁高架轻轨铁道桥（带工字钢横梁与高架列车剪影）
+      // ISSUE #4 布鲁克林海港：高架轻轨铁道桥 + 地铁涂鸦列车 + 港口龙门钢拱 + 吊绳工业警示灯
       const railY = 6.2;
       const deckLen = (this.mapW - 2) * CELL_SIZE;
+      const deckX = this.mapW * 0.5 * CELL_SIZE;
       const deckZ = 10.0 * CELL_SIZE;
-      const steelMat = this.assets.toonMat({ color: 0x3b4859 });
-      const hazardMat = this.assets.toonMat({ color: 0xffae19 });
-
-      const deck = new THREE.Mesh(new THREE.BoxGeometry(deckLen, 0.75, 4.4), steelMat);
-      deck.position.set(this.mapW * 0.5 * CELL_SIZE, railY, deckZ);
-      this.assets.addCreaseLines(deck);
-
-      const railSide1 = new THREE.Mesh(new THREE.BoxGeometry(deckLen, 0.45, 0.25), hazardMat);
-      railSide1.position.set(this.mapW * 0.5 * CELL_SIZE, railY + 0.6, deckZ - 2.1);
-      const railSide2 = new THREE.Mesh(new THREE.BoxGeometry(deckLen, 0.45, 0.25), hazardMat);
-      railSide2.position.set(this.mapW * 0.5 * CELL_SIZE, railY + 0.6, deckZ + 2.1);
-
-      // 高架桥上停靠的一列美漫黄色涂鸦地铁车厢
-      const train = new THREE.Mesh(
-        new THREE.BoxGeometry(18.0, 2.5, 3.2),
-        this.assets.toonMat({ color: 0xff2a44 })
-      );
-      train.position.set(this.mapW * 0.55 * CELL_SIZE, railY + 1.65, deckZ);
-      this.assets.addCreaseLines(train);
-      this.levelRoot.add(deck, railSide1, railSide2, train);
+      sc.addSolid("box", 0x3b4859, [deckX, railY, deckZ], [deckLen, 0.75, 4.4]);
+      sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ - 2.1], [deckLen, 0.45, 0.25]);
+      sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ + 2.1], [deckLen, 0.45, 0.25]);
+      // 桥腹工字钢横肋与高架接触网门架
+      for (let gx = 4; gx < this.mapW - 3; gx += 5) {
+        const px = gx * CELL_SIZE;
+        sc.addSolid("box", 0x263140, [px, railY - 0.55, deckZ], [0.75, 0.45, 4.7]);
+        sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ - 2.25], [0.24, 4.2, 0.24]);
+        sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ + 2.25], [0.24, 4.2, 0.24]);
+        sc.addSolid("box", 0x4b5b70, [px, railY + 4.7, deckZ], [0.26, 0.26, 4.8]);
+        sc.addEmissive("box", gx % 2 === 0 ? 0xffae19 : 0x00e5ff, [px, railY + 4.4, deckZ], [0.32, 0.22, 0.65]);
+      }
+      // 高架桥停靠的美漫红色涂鸦地铁列车（含车窗与车头灯）
+      const trainX = this.mapW * 0.55 * CELL_SIZE;
+      sc.addSolid("box", 0xd92638, [trainX, railY + 1.65, deckZ], [18.0, 2.5, 3.2]);
+      sc.addSolid("box", 0x202534, [trainX, railY + 2.95, deckZ], [17.4, 0.26, 2.8]);
+      for (let w = -6.5; w <= 6.5; w += 2.6) {
+        sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ + 1.62], [1.65, 0.85, 0.08]);
+        sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ - 1.62], [1.65, 0.85, 0.08]);
+      }
+      sc.addEmissive("box", 0xfff5c0, [trainX - 9.05, railY + 1.15, deckZ], [0.12, 0.42, 1.8]);
+      // 海港跨街钢缆吊绳工业灯
+      addHangingCable(3.5, 2.5, 13.5, 3.0, 5.6, [0xffae19, 0x00e5ff], "bulb");
+      addHangingCable(14.5, 14.5, 23.5, 15.0, 5.6, [0xffae19, 0xff5a2a], "bulb");
     } else if (lvl.districtStyle === "metropolis") {
-      // ISSUE #6 大都会环形金融广场：人行道两侧的赛璐璐翠绿行道树与中央广场金色英雄方尖碑
-      const trunkGeo = new THREE.CylinderGeometry(0.18, 0.24, 2.2, 8);
-      const crownGeo = new THREE.DodecahedronGeometry(1.35, 0);
-      const trunkMat = this.assets.toonMat({ color: 0x6e472b });
-      const leafMat = this.assets.toonMat({ color: 0x2ecc71 });
-
+      // ISSUE #6 大都会环形金融广场：合批实例化翠绿行道树 + 石材修剪绿篱 + 跨街 Art-Deco 金色凯旋横幅门
       for (let z = 3; z < this.mapH - 3; z += 5) {
         for (let x = 3; x < this.mapW - 3; x += 6) {
           if (!this.sidewalkGrid?.[z]?.[x] || this.map[z][x] !== 0) continue;
           const wx = (x + 0.5) * CELL_SIZE + 1.1;
           const wz = (z + 0.5) * CELL_SIZE + 1.1;
-          const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-          trunk.position.set(wx, 1.26, wz);
-          const crown = new THREE.Mesh(crownGeo, leafMat);
-          crown.position.set(0, 1.65, 0);
-          this.assets.addOutline(crown, 1.07);
-          trunk.add(crown);
-          this.levelRoot.add(trunk);
+          sc.addTree(wx, 0.16, wz, 0.95, 0x2ecc71, true);
         }
       }
+      // 中央银行大道石材绿篱与 Art-Deco 金融拱门
+      for (const gx of [10, 19]) {
+        const ax = gx * CELL_SIZE + 2.0;
+        sc.addSolid("box", 0xd4af37, [ax, 5.9, 9.5 * CELL_SIZE], [0.55, 0.85, 11.6]);
+        sc.addEmissive("box", 0x00e5ff, [ax, 6.45, 9.5 * CELL_SIZE], [0.22, 0.22, 10.6]);
+      }
+      for (const [hx, hz, rot] of [[14.5, 4.2, 0], [14.5, 14.8, 0], [5.2, 9.5, Math.PI / 2], [24.8, 9.5, Math.PI / 2]]) {
+        if (this.map[Math.floor(hz)]?.[Math.floor(hx)] === 0) {
+          sc.addPlanterHedge(hx * CELL_SIZE, 0.16, hz * CELL_SIZE, rot, 0x27ae60);
+        }
+      }
+    } else if (lvl.districtStyle === "nightmarket") {
+      // ISSUE #7 霓虹九龙城与迷宫夜市街区：三座高低错落霓虹连廊天桥（全合批）+ 斜拉发光吊绳霓虹灯笼索道
+      const addSkybridge = (x1, z1, x2, z2, y, neonColor, trimColor) => {
+        const dx = (x2 - x1) * CELL_SIZE;
+        const dz = (z2 - z1) * CELL_SIZE;
+        const len = Math.hypot(dx, dz);
+        const mx = ((x1 + x2) * 0.5) * CELL_SIZE;
+        const mz = ((z1 + z2) * 0.5) * CELL_SIZE;
+        const angle = Math.atan2(dx, dz);
+        const part = sc._makePartHelper(mx, y, mz, angle);
+        part("box", 0x22263c, 0, 0, 0, 3.2, 0.55, len);
+        part("box", trimColor, -1.5, 0.85, 0, 0.24, 1.35, len);
+        part("box", trimColor, 1.5, 0.85, 0, 0.24, 1.35, len);
+        part("box", neonColor, -1.72, 1.05, 0, 0.18, 0.92, Math.min(len * 0.58, 9.5), 0, true);
+        part("box", neonColor, 1.72, 1.05, 0, 0.18, 0.92, Math.min(len * 0.58, 9.5), 0, true);
+        part("box", 0x181c2e, 0, 2.45, 0, 3.6, 0.28, len);
+      };
+      addSkybridge(11.0, 7.5, 16.5, 7.5, 6.4, 0xff2ebd, 0x3f4768);
+      addSkybridge(23.5, 11.5, 23.5, 16.5, 7.2, 0x00e5ff, 0x453263);
+      addSkybridge(8.5, 15.5, 8.5, 20.5, 6.0, 0xffe01b, 0x3b4464);
+
+      const lanternColors = [0xff2ebd, 0x00e5ff, 0xffe01b, 0xff5a2a];
+      addHangingCable(13.5, 11.5, 22.5, 14.5, 5.8, lanternColors, "lantern");
+      addHangingCable(14.5, 16.5, 22.0, 12.0, 6.2, lanternColors, "lantern");
+      addHangingCable(14.0, 18.0, 21.5, 18.8, 5.6, lanternColors, "lantern");
+      addHangingCable(26.5, 5.5, 31.5, 9.5, 5.9, lanternColors, "lantern");
+      addHangingCable(4.5, 7.5, 10.5, 11.5, 5.7, lanternColors, "lantern");
+    } else if (lvl.districtStyle === "oldquarter") {
+      // ISSUE #8 老城运河弯街与大巴扎钟楼区：跨街石拱高架水道桥 + 中央四向穿行大钟楼拱门亭 + 垂坠彩旗与暖光吊灯（全合批！）
+      const archY = 6.4;
+      const archZ = 19.5 * CELL_SIZE;
+      const spanLen = (this.mapW - 4) * CELL_SIZE;
+      const midX = this.mapW * 0.5 * CELL_SIZE;
+      sc.addSolid("box", 0xd6c3a3, [midX, archY, archZ], [spanLen, 1.35, 3.2]);
+      sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ - 1.42], [spanLen, 0.72, 0.36]);
+      sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ + 1.42], [spanLen, 0.72, 0.36]);
+
+      for (let gx = 4; gx < this.mapW - 4; gx += 6) {
+        const px = gx * CELL_SIZE;
+        sc.addSolid("box", 0xc4ae8c, [px, archY - 1.1, archZ], [1.4, 1.35, 3.45]);
+        sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ - 1.45], [0.35, 0.55, 0.35]);
+        sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ + 1.45], [0.35, 0.55, 0.35]);
+      }
+
+      // 中央四向穿行钟楼拱门亭 (21.5, 13.5)
+      const fx = 21.5 * CELL_SIZE;
+      const fz = 13.5 * CELL_SIZE;
+      sc.addSolid("cylinder", 0xe6d4b3, [fx, 0.03, fz], [8.8, 0.06, 8.8]);
+      sc.addEmissive("cylinder", 0x00d9ff, [fx, 0.045, fz], [4.2, 0.08, 4.2]);
+      for (const sx of [-2.8, 2.8]) {
+        for (const sz of [-2.8, 2.8]) {
+          sc.addSolid("box", 0xd6c3a3, [fx + sx, 2.6, fz + sz], [0.85, 5.2, 0.85]);
+          sc.addSolid("box", 0xb09670, [fx + sx, 0.25, fz + sz], [1.15, 0.5, 1.15]);
+        }
+      }
+      sc.addSolid("box", 0xb09670, [fx, 5.65, fz], [7.0, 1.1, 7.0]);
+      sc.addSolid("box", 0xd6c3a3, [fx, 8.4, fz], [4.6, 4.4, 4.6]);
+      // 四面发光金色大钟盘
+      for (const [dx, dz, rw, rd] of [[0, 2.36, 2.5, 0.16], [0, -2.36, 2.5, 0.16], [2.36, 0, 0.16, 2.5], [-2.36, 0, 0.16, 2.5]]) {
+        sc.addSolid("box", 0xd4af37, [fx + dx, 8.6, fz + dz], [rw, 2.5, rd]);
+        sc.addEmissive("box", 0xfff3c4, [fx + dx * 1.03, 8.6, fz + dz * 1.03], [rw === 0.16 ? 0.10 : 2.05, 2.05, rd === 0.16 ? 0.10 : 2.05]);
+      }
+      sc.addSolid("pyramid", 0x226878, [fx, 12.7, fz], [4.8, 4.2, 4.8]);
+      sc.addEmissive("cylinder", 0xffcf33, [fx, 15.4, fz], [0.28, 2.2, 0.28]);
+
+      const flagColors = [0xff4b3e, 0xffcf33, 0x26b5c4, 0xff7a00, 0xf7f0d8];
+      addHangingCable(16.5, 10.0, 26.5, 11.5, 6.0, flagColors, "bunting");
+      addHangingCable(16.5, 16.5, 26.5, 15.5, 5.8, flagColors, "bunting");
+      addHangingCable(5.5, 7.5, 12.5, 10.5, 5.6, flagColors, "bunting");
+      addHangingCable(29.5, 7.5, 35.5, 11.5, 5.8, flagColors, "bunting");
     }
   }
 
-  // 街区 3 种漫画街头车辆造型（0: 黄色出租车  1: 红白快递货车  2: 蓝白警车，全部共享几何体零重复分配）
+  // 为所有非街区竞技场地图（ISSUE #3 墨水工厂 / ISSUE #5 霓虹天台 / ISSUE #9 半调博士实验室）构建合批精细环境细节
+  _buildArenaEnvironmentDetails(lvl) {
+    const sc = this.streetScenery;
+    if (!sc) return;
+    const W = this.mapW;
+    const H = this.mapH;
+    const worldW = W * CELL_SIZE;
+    const worldH = H * CELL_SIZE;
+
+    // 1. 通用墙面立柱壁肋与底角防撞线（合批进 StreetScenery，彻底告别光秃秃的方块墙）
+    const isSolid = (gx, gz) => {
+      const c = this.map[gz]?.[gx] || 0;
+      return c > 0 && !this._isLowCoverCell(c);
+    };
+    const ribColor = lvl.floorTex === "factoryFloor" ? 0x394659 : lvl.floorTex === "labFloor" ? 0x3b1f5e : 0x283652;
+    const accentColor = lvl.floorTex === "factoryFloor" ? 0xffae19 : lvl.floorTex === "labFloor" ? 0x00ff99 : 0x00e5ff;
+
+    for (let z = 0; z < H; z++) {
+      for (let x = 0; x < W; x++) {
+        if (!isSolid(x, z)) continue;
+        for (const [nx, nz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          if (this.map[z + nz]?.[x + nx] !== 0) continue;
+          const fx = (x + 0.5 + 0.5 * nx) * CELL_SIZE;
+          const fz = (z + 0.5 + 0.5 * nz) * CELL_SIZE;
+          const horiz = nz !== 0;
+          // 墙脚防撞踢脚线 + 竖向钢结构壁柱
+          sc.addSolid("box", ribColor, [fx + nx * 0.08, 0.24, fz + nz * 0.08], [horiz ? CELL_SIZE * 0.96 : 0.16, 0.44, horiz ? 0.16 : CELL_SIZE * 0.96]);
+          if ((x + z) % 2 === 0) {
+            sc.addSolid("box", ribColor, [fx + nx * 0.14, 2.45, fz + nz * 0.14], [horiz ? 0.34 : 0.28, 4.7, horiz ? 0.28 : 0.34]);
+            sc.addEmissive("box", accentColor, [fx + nx * 0.29, 3.85, fz + nz * 0.29], [horiz ? 0.18 : 0.08, 0.65, horiz ? 0.08 : 0.18]);
+          }
+        }
+      }
+    }
+
+    if (lvl.floorTex === "factoryFloor") {
+      // 【ISSUE #3 · 墨水工厂】：钢结构屋顶桁架 + 悬挂工业暖黄吊灯 + 顶部四色 CMYK 巨型墨水管道 + 四角发光墨水巨罐
+      for (let gx = 3; gx < W - 2; gx += 4) {
+        const px = gx * CELL_SIZE;
+        sc.addSolid("box", 0x2c384a, [px, 5.45, worldH * 0.5], [0.46, 0.52, worldH - CELL_SIZE * 1.4]);
+        for (const fz of [3.5 * CELL_SIZE, 7.5 * CELL_SIZE]) {
+          sc.addSolid("box", 0x1a202c, [px, 5.05, fz], [0.95, 0.24, 0.95]);
+          sc.addEmissive("box", 0xffe885, [px, 4.88, fz], [0.76, 0.12, 0.76]);
+        }
+      }
+      // 贯穿工厂天花板的 CMYK 四色巨型输墨主管道
+      const pipeSpecs = [
+        [2.2 * CELL_SIZE, 0x00e5ff],
+        [4.2 * CELL_SIZE, 0xff2ebd],
+        [6.8 * CELL_SIZE, 0xffe01b],
+        [8.8 * CELL_SIZE, 0x2a3142],
+      ];
+      for (const [pz, pcol] of pipeSpecs) {
+        sc.addSolid("box", pcol, [worldW * 0.5, 5.95, pz], [worldW - CELL_SIZE * 1.6, 0.56, 0.56]);
+        for (let gx = 2; gx < W - 2; gx += 3) {
+          sc.addSolid("box", 0x1b202e, [gx * CELL_SIZE, 5.95, pz], [0.22, 0.72, 0.72]);
+        }
+      }
+      // 四角墨水巨罐（贴角安全位）
+      sc.addIndustrialVat(1.7 * CELL_SIZE, 0, 1.7 * CELL_SIZE, 0x00e5ff);
+      sc.addIndustrialVat(1.7 * CELL_SIZE, 0, (H - 1.7) * CELL_SIZE, 0xff2ebd);
+      sc.addIndustrialVat((W - 1.7) * CELL_SIZE, 0, 1.7 * CELL_SIZE, 0xffe01b);
+      sc.addIndustrialVat((W - 1.7) * CELL_SIZE, 0, (H - 1.7) * CELL_SIZE, 0x00ffaa);
+    } else if (lvl.floorTex === "asphalt") {
+      // 【ISSUE #5 · 霓虹高速天台】：四周天台钢护栏 + 中心发光直升机停机坪 H 标识 + 四角无线电信号塔 + 屋顶霓虹广告牌
+      const paintMat = new THREE.MeshBasicMaterial({ color: 0xffe01b, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+      const hx = worldW * 0.5;
+      const hz = worldH * 0.5;
+      // 停机坪 H 标志与外框
+      sc.add("paint", paintMat, [hx - 1.8, 0.01, hz], [0.55, 1, 5.2]);
+      sc.add("paint", paintMat, [hx + 1.8, 0.01, hz], [0.55, 1, 5.2]);
+      sc.add("paint", paintMat, [hx, 0.01, hz], [3.6, 1, 0.55]);
+      sc.add("paint", paintMat, [hx, 0.01, hz - 4.4], [9.2, 1, 0.35]);
+      sc.add("paint", paintMat, [hx, 0.01, hz + 4.4], [9.2, 1, 0.35]);
+      sc.add("paint", paintMat, [hx - 4.4, 0.01, hz], [0.35, 1, 9.2]);
+      sc.add("paint", paintMat, [hx + 4.4, 0.01, hz], [0.35, 1, 9.2]);
+      // 墙顶霓虹导光护栏与四角高耸无线电信号塔
+      sc.addEmissive("box", 0x00e5ff, [worldW * 0.5, 5.25, 0.5 * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
+      sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 5.25, (H - 0.5) * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
+      sc.addRadioMast(0.5 * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 7.5, 0xff2a44);
+      sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 8.5, 0x00e5ff);
+      sc.addRadioMast(0.5 * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 7.0, 0xffe01b);
+      sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 8.0, 0xff2ebd);
+      // 墙顶巨型漫画霓虹灯箱广告架
+      sc.addRooftopDetail(2, worldW * 0.5, 4.95, 0.5 * CELL_SIZE, 9.5, 2.2);
+      sc.addRooftopDetail(2, worldW * 0.5, 4.95, (H - 0.5) * CELL_SIZE, 9.5, 2.2);
+    } else if (lvl.floorTex === "labFloor") {
+      // 【ISSUE #9 · 半调博士终极实验室】：高空悬吊褪色射线核心环 + 地面汇聚能量导管 + 四角发光反派培养舱
+      const cx = worldW * 0.56;
+      const cz = worldH * 0.5;
+      // 地面汇聚向 Boss 区域的霓虹能量槽
+      sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 0.03, cz], [worldW - CELL_SIZE * 2.4, 0.05, 0.36]);
+      sc.addEmissive("box", 0x00ff99, [cx, 0.03, worldH * 0.5], [0.36, 0.05, worldH - CELL_SIZE * 2.4]);
+      // 上空悬吊的巨型八角「全城褪色射线」主反应环（y = 6.2m，抬头震撼！）
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        const rx = cx + Math.cos(ang) * 5.2;
+        const rz = cz + Math.sin(ang) * 5.2;
+        sc.addSolid("box", 0x2b174a, [rx, 6.2, rz], [4.2, 0.72, 0.78], -ang + Math.PI / 2);
+        sc.addEmissive("box", i % 2 === 0 ? 0xff2ebd : 0x00ff99, [rx, 6.2, rz], [3.6, 0.28, 0.88], -ang + Math.PI / 2);
+      }
+      sc.addEmissive("sphere", 0xff2ebd, [cx, 6.2, cz], [2.4, 2.4, 2.4]);
+      sc.addSolid("cylinder", 0x1e1136, [cx, 8.2, cz], [1.2, 3.2, 1.2]);
+      // 四角发光实验培养舱
+      sc.addLabPod(1.65 * CELL_SIZE, 0, 1.65 * CELL_SIZE, 0, 0x00ff99);
+      sc.addLabPod(1.65 * CELL_SIZE, 0, (H - 1.65) * CELL_SIZE, Math.PI, 0xff2ebd);
+      sc.addLabPod((W - 1.65) * CELL_SIZE, 0, 1.65 * CELL_SIZE, 0, 0x00e5ff);
+      sc.addLabPod((W - 1.65) * CELL_SIZE, 0, (H - 1.65) * CELL_SIZE, Math.PI, 0xffe01b);
+    }
+  }
+
+  // 街区建筑外立面浮雕细节（窗楣、壁柱、九龙城外挑霓虹灯牌与空调箱、老城锻铁阳台）
   _addFacadeRelief(cell, gx, gz, wCells, dCells, height) {
-    const finish = { 1: 0xaa735c, 8: 0xc2885e, 11: 0xde9860, 13: 0xe4ceb0 }[cell];
+    const finish = { 1: 0xaa735c, 8: 0xc2885e, 11: 0xde9860, 13: 0xe4ceb0, 14: 0x3b4464, 15: 0xe6d2b0 }[cell];
     if (!finish) return;
     const scenery = this.streetScenery;
     const sides = [
@@ -1113,10 +1329,10 @@ export class ComicFPS3DEngine {
         if (adjacent !== 0 && !this._isLowCoverCell(adjacent)) continue;
         const faceX = (x + 0.5 + 0.5 * nx) * CELL_SIZE;
         const faceZ = (z + 0.5 + 0.5 * nz) * CELL_SIZE;
-        const relief = (y, w, h, depth, lateral = 0) => {
+        const relief = (y, w, h, depth, lateral = 0, color = finish) => {
           const position = [faceX + dx * lateral + nx * depth * 0.46, y,
             faceZ + dz * lateral + nz * depth * 0.46];
-          scenery.addSolid("box", finish, position, [dx ? w : depth, h, dz ? w : depth]);
+          scenery.addSolid("box", color, position, [dx ? w : depth, h, dz ? w : depth]);
         };
         // Stone lintels and sills sit proud of the inked façade.
         relief(cell === 13 ? 3.48 : 2.62, 2.76, 0.14, 0.24);
@@ -1127,25 +1343,218 @@ export class ComicFPS3DEngine {
             relief(0.31, 0.51, 0.28, 0.35, offset);
             relief(3.29, 0.54, 0.23, 0.33, offset);
           }
+        } else if (cell === 14) {
+          // 九龙城夜市楼：外挑发光竖向霓虹灯牌 + 银灰空调外机箱
+          const neonColors = [0xff2ebd, 0x00e5ff, 0xffe01b, 0xff5a2a];
+          const sig = (x * 7 + z * 11 + i) % 3;
+          if (sig === 0) {
+            const signCol = neonColors[(x + z) % neonColors.length];
+            const signH = Math.min(3.4, height - 4.2);
+            if (signH > 1.2) {
+              const sy = 4.6 + signH * 0.4;
+              scenery.addEmissive(
+                "box",
+                signCol,
+                [faceX + dx * 0.85 + nx * 0.62, sy, faceZ + dz * 0.85 + nz * 0.62],
+                [dx ? 0.24 : 1.25, signH, dz ? 0.24 : 1.25]
+              );
+              relief(sy, 0.14, signH * 0.88, 1.36, 0.85, 0x161822);
+            }
+          } else if (sig === 1) {
+            relief(4.15, 0.92, 0.62, 0.52, -0.75, 0x8b98ae);
+            relief(4.15, 0.46, 0.42, 0.58, -0.75, 0x1e2230);
+          }
+        } else if (cell === 8 && i === Math.floor(length / 2) && (x + z) % 2 === 0) {
+          // 褐石公寓楼外立面补充经典美漫铁艺消防逃生梯
+          const fRot = nz === 1 ? 0 : nz === -1 ? Math.PI : nx === 1 ? Math.PI / 2 : -Math.PI / 2;
+          scenery.addFireEscape(faceX, 0.16, faceZ, fRot, height > 11 ? 2 : 1);
+        } else if (cell === 15) {
+          // 老城拱廊楼：凸出石灰岩壁柱 + 铸铁悬挑小阳台
+          relief(4.55, 2.45, 0.16, 0.56, 0, 0xd8c39f);
+          relief(5.05, 2.42, 0.72, 0.10, 0, 0x1e222e);
+          if (height > 9.5) {
+            relief(7.6, 2.15, 0.15, 0.48, 0, 0xd8c39f);
+          }
         }
       }
     }
   }
 
-  // 街区人行道旁的漫画路灯与红色消防栓点缀。
-  _buildStreetBlockFurniture() {
-    for (let z = 2; z < this.mapH - 2; z += 4) {
-      for (let x = 2; x < this.mapW - 2; x += 4) {
-        if (this.map[z][x] !== 0) continue;
-        const northWall = this.map[z - 1]?.[x] > 0 && !this._isLowCoverCell(this.map[z - 1][x]);
-        const southWall = this.map[z + 1]?.[x] > 0 && !this._isLowCoverCell(this.map[z + 1][x]);
-        if (!northWall && !southWall) continue;
+  // 非规则精细街景家具布置：路口红绿灯、面向车道的路灯与消防栓、报刊亭/夜市摊、候车亭、露天咖啡伞、垃圾箱、邮筒、贩卖机、行道树
+  _buildStreetBlockFurniture(lvl) {
+    const H = this.mapH;
+    const W = this.mapW;
+    const roadGrid = this.roadGrid;
+    const swGrid = this.sidewalkGrid;
+    const style = lvl.districtStyle || "default";
 
-        const lamp = (x + z) % 8 === 0;
-        const wx = (x + 0.5) * CELL_SIZE + (lamp ? -1.45 : 1.45);
-        const wz = (z + 0.5) * CELL_SIZE + (northWall ? -1.55 : 1.55);
-        const ground = this.sidewalkGrid[z][x] ? 0.16 : 0;
-        this.streetScenery.addStreetFixture(lamp, wx, ground, wz);
+    // 收集不可遮挡的关键点位（玩家出生点、敌人、道具、移动平台、激光线、老城中央喷泉），确保装饰物绝不碍路或穿模
+    const reserved = [];
+    if (lvl.playerStart) reserved.push([lvl.playerStart.x * CELL_SIZE, lvl.playerStart.z * CELL_SIZE, 3.6]);
+    for (const e of lvl.enemies || []) reserved.push([e.x * CELL_SIZE, e.z * CELL_SIZE, 2.6]);
+    for (const p of lvl.props || []) reserved.push([p.x * CELL_SIZE, p.z * CELL_SIZE, 2.6]);
+    for (const m of lvl.movers || []) {
+      const r = (m.range || 2) * CELL_SIZE + 2.5;
+      reserved.push([m.x * CELL_SIZE, m.z * CELL_SIZE, Math.min(r, 5.2)]);
+    }
+    if (style === "oldquarter") {
+      reserved.push([21.5 * CELL_SIZE, 13.5 * CELL_SIZE, 5.2]); // 中央喷泉池
+    }
+
+    const isClear = (wx, wz, pad = 0) => {
+      for (let i = 0; i < reserved.length; i++) {
+        const [rx, rz, rr] = reserved[i];
+        const dx = wx - rx;
+        const dz = wz - rz;
+        if (dx * dx + dz * dz < (rr + pad) * (rr + pad)) return false;
+      }
+      return true;
+    };
+
+    const isBuilding = (gx, gz) => {
+      const c = this.map[gz]?.[gx] || 0;
+      return c > 0 && !this._isLowCoverCell(c);
+    };
+
+    const placed = [];
+    const canPlaceProp = (wx, wz, minSpacing = 3.2) => {
+      if (!isClear(wx, wz, 0.3)) return false;
+      for (let i = 0; i < placed.length; i++) {
+        const dx = wx - placed[i][0];
+        const dz = wz - placed[i][1];
+        if (dx * dx + dz * dz < minSpacing * minSpacing) return false;
+      }
+      placed.push([wx, wz]);
+      return true;
+    };
+
+    // 1. 十字/丁字路口自动安放悬臂交通红绿灯
+    if (roadGrid) {
+      const isCenterNode = (vx, vz) =>
+        vx >= 1 && vz >= 1 && vx < W && vz < H &&
+        roadGrid[vz - 1][vx - 1] === 1 &&
+        roadGrid[vz - 1][vx] === 1 &&
+        roadGrid[vz][vx - 1] === 1 &&
+        roadGrid[vz][vx] === 1;
+
+      for (let vz = 2; vz < H - 2; vz++) {
+        for (let vx = 2; vx < W - 2; vx++) {
+          if (!isCenterNode(vx, vz)) continue;
+          let deg = 0;
+          if (isCenterNode(vx + 1, vz)) deg++;
+          if (isCenterNode(vx - 1, vz)) deg++;
+          if (isCenterNode(vx, vz + 1)) deg++;
+          if (isCenterNode(vx, vz - 1)) deg++;
+          if (deg < 3) continue;
+
+          // 在路口对角人行道转角处放置红绿灯（面向路口中心）
+          const corners = [
+            { gx: vx - 2, gz: vz - 2, rotY: -Math.PI * 0.25 },
+            { gx: vx + 1, gz: vz + 1, rotY: Math.PI * 0.75 },
+          ];
+          for (const c of corners) {
+            if (!swGrid?.[c.gz]?.[c.gx] || this.map[c.gz]?.[c.gx] !== 0) continue;
+            const wx = (c.gx + 0.5) * CELL_SIZE;
+            const wz = (c.gz + 0.5) * CELL_SIZE;
+            if (canPlaceProp(wx, wz, 5.5)) {
+              this.streetScenery.addTrafficLight(wx, 0.16, wz, c.rotY);
+            }
+          }
+        }
+      }
+    }
+
+    // 2. 遍历所有人行道格子，用确定性空间哈希生成「非规则、贴墙/贴路沿、分区风格鲜明」的精细街景
+    for (let z = 1; z < H - 1; z++) {
+      for (let x = 1; x < W - 1; x++) {
+        if (this.map[z][x] !== 0 || !swGrid?.[z]?.[x]) continue;
+
+        const hash = Math.abs((x * 73856093) ^ (z * 19349663) ^ ((x + z) * 83492791));
+        const cx = (x + 0.5) * CELL_SIZE;
+        const cz = (z + 0.5) * CELL_SIZE;
+
+        // 检测紧邻马路方向（用于放置面向车道的路灯与消防栓）
+        const roadDir =
+          roadGrid?.[z]?.[x + 1] ? { nx: 1, nz: 0, rotY: 0 } :
+          roadGrid?.[z]?.[x - 1] ? { nx: -1, nz: 0, rotY: Math.PI } :
+          roadGrid?.[z + 1]?.[x] ? { nx: 0, nz: 1, rotY: -Math.PI / 2 } :
+          roadGrid?.[z - 1]?.[x] ? { nx: 0, nz: -1, rotY: Math.PI / 2 } : null;
+
+        // 检测紧邻建筑墙面方向（用于贴墙安放报刊亭、候车亭、贩卖机、垃圾箱、邮筒、电话亭）
+        const wallDir =
+          isBuilding(x, z - 1) ? { bx: 0, bz: -1, faceRot: 0 } :
+          isBuilding(x, z + 1) ? { bx: 0, bz: 1, faceRot: Math.PI } :
+          isBuilding(x - 1, z) ? { bx: -1, bz: 0, faceRot: Math.PI / 2 } :
+          isBuilding(x + 1, z) ? { bx: 1, bz: 0, faceRot: -Math.PI / 2 } : null;
+
+        // 2a. 靠马路路沿：路灯 & 消防栓（按非均匀哈希错落排布）
+        if (roadDir && hash % 7 === 0) {
+          const isLamp = (hash >> 3) % 3 !== 0;
+          const jitter = (((hash >> 5) % 5) - 2) * 0.25;
+          const lx = cx + roadDir.nx * 1.48 + (roadDir.nz ? jitter : 0);
+          const lz = cz + roadDir.nz * 1.48 + (roadDir.nx ? jitter : 0);
+          if (canPlaceProp(lx, lz, isLamp ? 6.2 : 5.0)) {
+            this.streetScenery.addStreetFixture(isLamp, lx, 0.16, lz, roadDir.rotY);
+            continue;
+          }
+        }
+
+        // 2b. 贴建筑外墙：各类精细街边生活道具（仅贴墙 1.28m，留出宽敞通行道）
+        if (wallDir && (hash % 5 === 1 || ((style === "nightmarket" || style === "oldquarter") && hash % 5 === 2))) {
+          const px = cx + wallDir.bx * 1.24;
+          const pz = cz + wallDir.bz * 1.24;
+          const yawJitter = ((((hash >> 4) % 7) - 3) / 3) * 0.08;
+          const rot = wallDir.faceRot + yawJitter;
+          const pick = (hash >> 7) % 12;
+
+          if (style === "nightmarket") {
+            if (pick < 3 && canPlaceProp(px, pz, 5.2)) {
+              const accent = pick === 0 ? 0xff2ebd : pick === 1 ? 0x00c8e8 : 0xff7a00;
+              this.streetScenery.addNewsstand(px, 0.16, pz, rot, accent);
+            } else if (pick < 6 && canPlaceProp(px, pz, 4.2)) {
+              this.streetScenery.addStreetClutter(2, px, 0.16, pz, rot); // 霓虹自动贩卖机
+            } else if (pick < 8 && canPlaceProp(px, pz, 4.2)) {
+              this.streetScenery.addStreetClutter(0, px, 0.16, pz, rot); // 巷口垃圾箱
+            } else if (pick < 10 && canPlaceProp(px, pz, 4.4)) {
+              this.streetScenery.addStreetClutter(5, px, 0.16, pz, rot); // 夜市货箱堆
+            } else if (canPlaceProp(px, pz, 5.5)) {
+              this.streetScenery.addStreetClutter(3, px, 0.16, pz, rot + 0.18); // 路障锥桶
+            }
+          } else if (style === "oldquarter") {
+            if (pick < 3 && canPlaceProp(px, pz, 5.0)) {
+              const umb = pick === 0 ? 0xd93829 : pick === 1 ? 0x1b8ca6 : 0xe89923;
+              this.streetScenery.addCafeTable(px, 0.16, pz, rot, umb);
+            } else if (pick < 5 && canPlaceProp(px, pz, 5.6)) {
+              this.streetScenery.addNewsstand(px, 0.16, pz, rot, pick === 3 ? 0xc44e32 : 0x227c6c);
+            } else if (pick === 5 && canPlaceProp(px, pz, 6.4)) {
+              this.streetScenery.addBusShelter(px, 0.16, pz, rot, 0xffcf33);
+            } else if (pick < 8 && canPlaceProp(px, pz, 4.6)) {
+              this.streetScenery.addStreetClutter(pick === 6 ? 4 : 1, px, 0.16, pz, rot); // 电话亭/邮筒
+            } else if (pick < 10 && canPlaceProp(px, pz, 4.6)) {
+              this.streetScenery.addStreetClutter(5, px, 0.16, pz, rot); // 巴扎货箱陶罐
+            } else if (canPlaceProp(px, pz, 5.8)) {
+              this.streetScenery.addTree(px, 0.16, pz, 0.85 + (hash % 3) * 0.12, pick === 10 ? 0x2ea859 : 0x4ca64c, true);
+            }
+          } else {
+            // 唐人街 / 海港 / 大都会同样升级丰富微细节
+            if (pick < 2 && canPlaceProp(px, pz, 6.2)) {
+              this.streetScenery.addBusShelter(px, 0.16, pz, rot, style === "chinatown" ? 0xffae19 : 0x00e5ff);
+            } else if (pick < 4 && canPlaceProp(px, pz, 5.6)) {
+              this.streetScenery.addNewsstand(px, 0.16, pz, rot, style === "chinatown" ? 0xd92027 : 0xff2a44);
+            } else if (pick < 9 && canPlaceProp(px, pz, 4.8)) {
+              this.streetScenery.addStreetClutter(pick % 5, px, 0.16, pz, rot);
+            }
+          }
+        } else if (style === "oldquarter" && !wallDir && hash % 13 === 0) {
+          // 老城宽阔广场人行道点缀错落的行道树与遮阳咖啡伞
+          if (canPlaceProp(cx, cz, 6.5)) {
+            if ((hash >> 3) % 2 === 0) {
+              this.streetScenery.addTree(cx, 0.16, cz, 1.0 + (hash % 3) * 0.12, 0x359e58, true);
+            } else {
+              this.streetScenery.addCafeTable(cx, 0.16, cz, (hash % 6) * 0.5, 0xd9482e);
+            }
+          }
+        }
       }
     }
   }
@@ -1627,10 +2036,10 @@ export class ComicFPS3DEngine {
       this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
       const hit = this.raycaster.intersectObjects(targets, false).find(({ distance, object }) => {
         const { enemy, prop, player } = object.userData;
-        return (this.renderer || distance <= 95) && (enemy?.alive ?? prop?.active ?? (!player || player.hp > 0));
+        return (this.renderer || distance <= 130) && (enemy?.alive ?? prop?.active ?? (!player || player.hp > 0));
       });
 
-      let endPoint = this.raycaster.ray.origin.clone().addScaledVector(this.raycaster.ray.direction, 95);
+      let endPoint = this.raycaster.ray.origin.clone().addScaledVector(this.raycaster.ray.direction, 130);
 
       if (hit) {
         endPoint = hit.point;
@@ -1682,11 +2091,10 @@ export class ComicFPS3DEngine {
     }
     const dir = new THREE.Vector3().subVectors(end, start);
     const len = Math.max(0.2, dir.length());
-    const geo = new THREE.CylinderGeometry(radius, radius, len, 6);
-    geo.rotateX(Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(this._tracerGeo, mat);
     mesh.position.copy(start).addScaledVector(dir, 0.5);
+    mesh.scale.set(radius, radius, len);
     mesh.lookAt(end);
     this.levelRoot.add(mesh);
     this.tracers.push({ mesh, age: 0, life: 0.085 });
@@ -1694,8 +2102,8 @@ export class ComicFPS3DEngine {
 
   _spawnParticles(pos, color, count = 8) {
     if (!this.renderer) return;
+    const mat = this._getFxMaterial(color);
     for (let i = 0; i < count; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color });
       const mesh = new THREE.Mesh(this.particleGeometry, mat);
       this.assets.addOutline(mesh, 1.25);
       mesh.position.copy(pos);
@@ -1716,7 +2124,7 @@ export class ComicFPS3DEngine {
   _spawnShockwave(pos, color = 0xff7a00) {
     if (!this.renderer) return;
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.6, 0.14, 8, 24),
+      this._shockwaveGeo,
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
     );
     ring.rotation.x = Math.PI / 2;
@@ -2799,10 +3207,8 @@ export class ComicFPS3DEngine {
   }
 
   _makeProjectileMesh(type, color) {
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(type === "boss" ? 0.28 : 0.18, 8, 8),
-      new THREE.MeshBasicMaterial({ color })
-    );
+    const mesh = new THREE.Mesh(this._projGeo, this._getFxMaterial(color));
+    mesh.scale.setScalar(type === "boss" ? 0.28 : 0.18);
     this.assets.addOutline(mesh, 1.35);
     return mesh;
   }
@@ -2838,8 +3244,14 @@ export class ComicFPS3DEngine {
 
   _disposeTransientMesh(mesh) {
     mesh.removeFromParent();
-    if (mesh.geometry !== this.particleGeometry) mesh.geometry.dispose();
-    mesh.material.dispose();
+    const g = mesh.geometry;
+    if (g && g !== this.particleGeometry && g !== this._tracerGeo && g !== this._projGeo && g !== this._shockwaveGeo) {
+      g.dispose();
+    }
+    const m = mesh.material;
+    if (m && !m.userData?.cachedFx) {
+      m.dispose();
+    }
   }
 
   _disposeGrenadeMesh(mesh) {
@@ -2907,7 +3319,7 @@ export class ComicFPS3DEngine {
   }
 
   _projectToScreen(worldPos) {
-    const v = worldPos.clone().project(this.camera);
+    const v = this._tmpProjVec.copy(worldPos).project(this.camera);
     if (v.z > 1) return null; // 在镜头背后
     return {
       x: (v.x * 0.5 + 0.5) * this.viewW,

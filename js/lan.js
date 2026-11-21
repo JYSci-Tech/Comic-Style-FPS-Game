@@ -1,9 +1,22 @@
+import { COMIC_LEVELS } from "./levels.js";
 import { INPUT_KEYS, KILL_LIMIT, ROOM_SIZE } from "./lan-rules.js";
 import { LanView } from "./lan-view.js";
 
 const element = (id) => document.getElementById(id);
 const show = (node, visible) => node.classList.toggle("hidden", !visible);
 const modeName = (mode) => mode === "coop" ? "合作闯关" : "玩家对战";
+
+const MAP_CN_META = [
+  { cn: "市中心暗巷", tag: "街巷", accent: "#ff6b52" },
+  { cn: "唐人街盘龙弯道", tag: "街区", accent: "#e8552c" },
+  { cn: "墨水工厂", tag: "室内", accent: "#00a8bb" },
+  { cn: "布鲁克林海港", tag: "街区", accent: "#2b6e8c" },
+  { cn: "霓虹高速天台", tag: "天台", accent: "#1e88e5" },
+  { cn: "大都会金融广场", tag: "大街区", accent: "#1a75ff" },
+  { cn: "霓虹九龙城迷宫", tag: "超大街区", accent: "#ff2ebd" },
+  { cn: "老城运河大巴扎", tag: "巨型街区", accent: "#ffcf40" },
+  { cn: "半调博士实验室", tag: "决战室", accent: "#a824a0" },
+];
 
 export class LanClient {
   constructor(engine, callbacks) {
@@ -49,7 +62,40 @@ export class LanClient {
       this.callbacks.lockPointer();
     });
     element("lan-home").addEventListener("click", () => this.close());
+    element("lan-map-random")?.addEventListener("click", () => {
+      if (!this.isHost || this.room?.mode !== "pvp") return;
+      const current = this.room.mapIndex ?? 0;
+      let next = Math.floor(Math.random() * COMIC_LEVELS.length);
+      if (COMIC_LEVELS.length > 1 && next === current) next = (next + 1) % COMIC_LEVELS.length;
+      this.send({ type: "select_map", mapIndex: next });
+    });
+    this._initMapGrid();
     if (this.code.value) this.open();
+  }
+
+  _initMapGrid() {
+    const grid = element("lan-map-grid");
+    if (!grid) return;
+    this.mapButtons = COMIC_LEVELS.map((lvl, idx) => {
+      const meta = MAP_CN_META[idx] || { cn: lvl.name, tag: lvl.streetTheme ? "街区" : "竞技场", accent: "#ffe01b" };
+      const w = lvl.map[0].length;
+      const h = lvl.map.length;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "lan-map-card";
+      btn.dataset.mapIndex = String(idx);
+      btn.style.setProperty("--map-accent", meta.accent);
+      btn.innerHTML =
+        `<span class="lan-map-card-top"><b>${lvl.issue}</b><em>${meta.tag} · ${w}×${h}</em></span>` +
+        `<span class="lan-map-card-cn">${meta.cn}</span>` +
+        `<span class="lan-map-card-en">${lvl.name}</span>`;
+      btn.addEventListener("click", () => {
+        if (!this.isHost || this.room?.mode !== "pvp") return;
+        this.send({ type: "select_map", mapIndex: idx });
+      });
+      return btn;
+    });
+    grid.replaceChildren(...this.mapButtons);
   }
 
   get isHost() {
@@ -151,13 +197,35 @@ export class LanClient {
       if (this.id) this.status.textContent = "同一网络下的 2–4 名玩家可以一起游戏。";
       return;
     }
-    const { code, mode, members, host, note } = this.room;
+    const { code, mode, members, host, note, mapIndex = 0 } = this.room;
     this.code.value = code;
     element("lan-room-mode").textContent = modeName(mode) + " · " + code;
     const localHostname = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
     const invite = new URL(localHostname && this.addresses.length ? this.addresses[0] : "/", location.href);
     invite.searchParams.set("room", code);
     element("lan-invite").value = invite.href;
+    const isPvp = mode === "pvp";
+    const picker = element("lan-map-picker");
+    if (picker) {
+      show(picker, isPvp);
+      if (isPvp) {
+        const safeIdx = Math.max(0, Math.min(COMIC_LEVELS.length - 1, mapIndex));
+        const selectedLvl = COMIC_LEVELS[safeIdx];
+        const meta = MAP_CN_META[safeIdx] || { cn: selectedLvl.name };
+        const curEl = element("lan-map-current");
+        if (curEl) {
+          curEl.textContent = `${selectedLvl.issue} · ${meta.cn}` + (this.isHost ? "" : "（房主选图）");
+        }
+        const randBtn = element("lan-map-random");
+        if (randBtn) show(randBtn, this.isHost);
+        for (let i = 0; i < (this.mapButtons?.length || 0); i++) {
+          const btn = this.mapButtons[i];
+          btn.classList.toggle("selected", i === safeIdx);
+          btn.setAttribute("aria-checked", i === safeIdx ? "true" : "false");
+          btn.disabled = !this.isHost;
+        }
+      }
+    }
     element("lan-members").replaceChildren(...members.map((member) => {
       const row = document.createElement("li");
       row.textContent = member.name + (member.id === this.id ? "（你）" : "") + (member.id === host ? " · 房主" : "");
@@ -165,7 +233,7 @@ export class LanClient {
     }));
     show(element("lan-start"), this.isHost);
     element("lan-start").disabled = members.length < 2;
-    const rule = mode === "coop" ? "组队完成五期关卡" : "率先击倒对手 10 次获胜";
+    const rule = mode === "coop" ? `组队完成 ${COMIC_LEVELS.length} 期关卡` : "率先击倒对手 10 次获胜";
     this.status.textContent = note || (members.length < 2 ? "把邀请链接发给队友，至少两人即可开始。"
       : members.length + "/" + ROOM_SIZE + " 人 · " + rule + (this.isHost ? "" : " · 等待房主开始"));
   }
@@ -311,7 +379,7 @@ export class LanClient {
       title.textContent = modeName(this.match.mode);
       desc.textContent = this.match.mode === "coop"
         ? this.engine.level.issue + " · " + this.engine.level.name + "。点击进入战斗锁定鼠标。"
-        : "率先击倒对手 " + KILL_LIMIT + " 次获胜。点击进入战斗锁定鼠标。";
+        : `${this.engine.level.issue} · ${this.engine.level.name} — 率先击倒对手 ${KILL_LIMIT} 次获胜。点击进入战斗锁定鼠标。`;
     } else if (phase === "cleared") {
       tag.textContent = "STAGE CLEARED!";
       title.textContent = this.engine.level.issue + " 已通关";
@@ -336,7 +404,7 @@ export class LanClient {
     } else {
       tag.textContent = "VICTORY!";
       title.textContent = "全队通关！";
-      desc.textContent = "已完成全部五期 · 团队得分 " + this.match.score;
+      desc.textContent = `已完成全部 ${COMIC_LEVELS.length} 期 · 团队得分 ` + this.match.score;
     }
     this.updateMatchActionDelay();
   }

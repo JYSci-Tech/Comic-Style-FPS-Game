@@ -17,12 +17,19 @@ const assets = {
   textures: {
     asphalt: texture,
     streetFloor: texture,
+    sidewalk: texture,
     factoryFloor: texture,
     labFloor: texture,
     barrel: texture,
     comicShop: texture,
     apartment: texture,
     graffiti: texture,
+    viaduct: texture,
+    chinatown: texture,
+    container: texture,
+    marbleBank: texture,
+    nightMarket: texture,
+    oldQuarter: texture,
   },
   wallMaterials: { 1: new THREE.MeshBasicMaterial() },
   toonMat: ({ color = 0xffffff }) => new THREE.MeshBasicMaterial({ color }),
@@ -116,12 +123,16 @@ export class LanMatch {
     if (this.mode === "pvp") {
       const mapW = level.map[0].length;
       const mapH = level.map.length;
-      const arenaSpawns = [
+      const rawSpawns = [
         [2.5, 2.5],
         [mapW - 2.5, mapH - 2.5],
-        [mapW - 2.5, 1.5],
+        [mapW - 2.5, 2.5],
         [2.5, mapH - 2.5],
-      ].map(([sx, sz]) => {
+      ];
+      if (mapW >= 22) {
+        rawSpawns.push([mapW * 0.5, 2.5], [mapW * 0.5, mapH - 2.5]);
+      }
+      const arenaSpawns = rawSpawns.map(([sx, sz]) => {
         const safe = this.engine._safeWorldPos(sx, sz);
         return [safe.x / CELL_SIZE, safe.z / CELL_SIZE];
       });
