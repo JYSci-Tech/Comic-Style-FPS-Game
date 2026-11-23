@@ -88,21 +88,29 @@ export class LanView {
       const active = Array.isArray(entry) ? entry[0] : entry;
       const px = Array.isArray(entry) ? entry[1] : prop.x;
       const pz = Array.isArray(entry) ? entry[2] : prop.z;
+      const life = Array.isArray(entry) && typeof entry[3] === "number" ? entry[3] : -1;
       if (prop.active && !active) {
         prop.active = false;
+        prop.life = life;
+        prop.blinkPhase = 0;
+        prop.mesh.visible = true;
         prop.mesh.removeFromParent();
       } else if (!prop.active && active) {
         prop.active = true;
-        prop.x = px;
-        prop.z = pz;
-        const baseY = prop.type === "barrel" ? 0.725 : prop.type === "medkit" ? 0.55 : prop.type === "ammo" ? 0.52 : 0.11;
-        prop.mesh.position.set(px, baseY, pz);
+        prop.life = life;
+        prop.blinkPhase = 0;
+        prop.mesh.visible = true;
+        engine._setPropPosition(prop, px, pz);
         engine.levelRoot.add(prop.mesh);
-      } else if (active && (prop.x !== px || prop.z !== pz)) {
-        prop.x = px;
-        prop.z = pz;
-        prop.mesh.position.x = px;
-        prop.mesh.position.z = pz;
+      } else if (active) {
+        if (prop.x !== px || prop.z !== pz) {
+          engine._setPropPosition(prop, px, pz);
+        }
+        prop.life = life;
+        if (life > 6.5 || life < 0) {
+          prop.mesh.visible = true;
+          prop.blinkPhase = 0;
+        }
       }
     });
     this.updateProjectiles(snapshot.projectiles);
@@ -278,13 +286,20 @@ export class LanView {
     const targetTilt = isDead ? 1 : 0;
     this.deathTilt += (targetTilt - this.deathTilt) * Math.min(1, dt * 8);
     if (this.deathTilt > 0.005) {
-      engine.camera.position.y -= this.deathTilt * 0.85;
+      const groundY = engine._groundHeightAt(player.pos.x, player.pos.z);
+      engine.camera.position.y = Math.max(groundY + 0.28, engine.camera.position.y - this.deathTilt * 0.85);
       engine.camera.rotation.z = this.deathTilt * 0.42;
     }
     if (engine.weapons.root) engine.weapons.root.visible = !isDead;
+    if (isDead && engine.weapons.punchFist) engine.weapons.punchFist.visible = false;
     engine.levelTime += dt;
     engine._updateDynamics(dt, [engine.player], false);
-    engine._updateProps(dt, false);
+    for (const pr of engine.props) {
+      if (pr.active && pr.life > 0 && engine._isDynamicPickup(pr.type)) {
+        pr.life = Math.max(0, pr.life - dt);
+      }
+    }
+    engine._updateProps(dt, false, true);
     engine._updateFX(dt);
 
     for (const avatar of this.avatars.values()) {

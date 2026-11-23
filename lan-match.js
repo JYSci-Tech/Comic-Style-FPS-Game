@@ -152,7 +152,9 @@ export class LanMatch {
       x = desired.x / CELL_SIZE;
       z = desired.z / CELL_SIZE;
     }
-    player.pos.set(x * CELL_SIZE, 0, z * CELL_SIZE);
+    const sx = x * CELL_SIZE;
+    const sz = z * CELL_SIZE;
+    player.pos.set(sx, this.engine._groundHeightAt(sx, sz), sz);
     player.yaw = yaw;
     this.syncAvatar(player);
   }
@@ -297,6 +299,7 @@ export class LanMatch {
       if (player.hp > 0) this.attack(player);
     }
     this.actor = null;
+    engine._updateDynamicPickups(dt, this.players);
     engine._updateGrenades(dt, this.players);
     if (this.mode === "coop") {
       engine._updateEnemies(dt, this.players);
@@ -316,6 +319,7 @@ export class LanMatch {
         if (engine.map[z][x] !== 0) continue;
         const wx = (x + 0.5) * CELL_SIZE;
         const wz = (z + 0.5) * CELL_SIZE;
+        if (engine._isStaticBlocked(wx, wz, 0, 0.75)) continue;
         const nearProp = props.some((p) => p.active && Math.hypot(p.x - wx, p.z - wz) < CELL_SIZE * 1.1);
         if (nearProp) continue;
         const nearPlayer = this.players.some((pl) => pl.hp > 0 && Math.hypot(pl.pos.x - wx, pl.pos.z - wz) < CELL_SIZE * 1.4);
@@ -330,31 +334,26 @@ export class LanMatch {
   _updatePvpPropRespawns(dt) {
     const engine = this.engine;
     for (const pr of engine.props) {
-      if (pr.type === "jumppad" || pr.type === "boostpad") continue;
+      if (pr.type !== "barrel") continue;
       if (pr.active) {
         pr.respawnTimer = 0;
         continue;
       }
       if (!pr.respawnTimer) {
-        pr.respawnTimer = pr.type === "barrel" ? 13 + Math.random() * 5 : 8 + Math.random() * 4;
+        pr.respawnTimer = 13 + Math.random() * 5;
       } else {
         pr.respawnTimer -= dt;
         if (pr.respawnTimer <= 0) {
           const spot = this._pickRandomOpenCell(engine.props);
           if (spot) {
-            pr.x = spot.x;
-            pr.z = spot.z;
-            const baseY = pr.type === "barrel" ? 0.725 : pr.type === "medkit" ? 0.55 : 0.52;
-            pr.mesh.position.set(spot.x, baseY, spot.z);
+            engine._setPropPosition(pr, spot.x, spot.z);
             pr.active = true;
             pr.respawnTimer = 0;
             engine.levelRoot.add(pr.mesh);
-            if (pr.type === "barrel" && !engine.hitTargets.includes(pr.mesh)) {
+            if (!engine.hitTargets.includes(pr.mesh)) {
               engine.hitTargets.push(pr.mesh);
             }
-            const label = pr.type === "medkit" ? "+HP 刷新!" : pr.type === "ammo" ? "弹药刷新!" : "TNT 刷新!";
-            const color = pr.type === "medkit" ? "#38e54d" : pr.type === "ammo" ? "#ffe01b" : "#ff7a00";
-            engine.spawnPopup(new THREE.Vector3(spot.x, 1.5, spot.z), label, color, 0.9);
+            engine.spawnPopup(new THREE.Vector3(spot.x, 1.5, spot.z), "TNT 刷新!", "#ff7a00", 0.9);
           } else {
             pr.respawnTimer = 2;
           }
@@ -389,7 +388,12 @@ export class LanMatch {
       enemies: this.engine.enemies.map((enemy) => [
         ...enemy.root.position.toArray(), enemy.root.rotation.y, Math.max(0, enemy.hp), enemy.deathAnim, enemy.animPhase,
       ]),
-      props: this.engine.props.map((prop) => [prop.active, prop.x, prop.z]),
+      props: this.engine.props.map((prop) => [
+        prop.active,
+        prop.x,
+        prop.z,
+        prop.life >= 0 ? Math.round(prop.life * 100) / 100 : -1,
+      ]),
       projectiles: this.engine.enemyProjectiles.map(({ id, mesh, type, color }) => [id, type, color, ...mesh.position.toArray()]),
       grenades: this.engine.grenades.map(({ id, mesh, fuse }) => [id, ...mesh.position.toArray(), fuse]),
       events: this.events.splice(0),

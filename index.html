@@ -165,8 +165,8 @@
         </div>
       </div>
 
-      <div class="controls-strip">
-        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · C 滑铲 · 左键射击 · 右键机瞄 · 按住 G/Q 瞄准松开扔手雷 · E/V 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
+      <div id="hud-controls-strip" class="controls-strip">
+        WASD 移动 · SPACE 跳跃 · SHIFT 冲刺 · C 滑铲 · 左键射击 · 右键机瞄 · 按住 G 瞄准松开扔手雷 · E 重拳 · R 换弹 · 1-4 切枪 · ESC 暂停
       </div>
     </div>
 
@@ -182,7 +182,7 @@
       </div>
 
       <div class="aaa-footer">
-        <span class="aaa-hint">WASD 移动 · SPACE 跳跃 · C 滑铲 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · 按住 G 瞄准扔手雷 · E 重拳</span>
+        <span id="aaa-controls-hint" class="aaa-hint">WASD 移动 · SPACE 跳跃 · C 滑铲 · SHIFT 冲刺 · 左键开火 / 右键机瞄 · 按住 G 瞄准扔手雷 · E 重拳</span>
       </div>
 
       <nav class="aaa-menu" aria-label="主菜单">
@@ -190,6 +190,7 @@
         <button id="btn-start" class="aaa-menu-btn primary" type="button">开始战役 · ISSUE #1</button>
         <button id="btn-lan" class="aaa-menu-btn" type="button">局域网联机 · CO-OP / PVP</button>
         <button id="btn-guide" class="aaa-menu-btn" type="button">操作指南与玩法</button>
+        <button id="btn-keybinds" class="aaa-menu-btn" type="button">键位设置 · KEYBINDS</button>
         <button id="btn-toggle-sfx" class="aaa-menu-btn subtle" type="button">音效: 开启</button>
       </nav>
     </div>
@@ -202,13 +203,13 @@
         <div class="cover-panels guide-panels">
           <div class="info-panel">
             <h3>基础操作</h3>
-            <ul>
+            <ul id="guide-controls-list">
               <li><b>W A S D / SPACE</b>：移动、跳跃翻越木箱与移动平台</li>
               <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
-              <li><b>SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
+              <li><b>L-SHIFT</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
               <li><b>C 键（奔跑中）</b>：高速战术滑铲（低视角滑行 + 可接跳跃）</li>
-              <li><b>按住 G / Q 键</b>：移动鼠标预瞄抛物线与落点，松开投掷手雷 · 右键取消（首局 1 颗，每晋级 +2 颗）</li>
-              <li><b>E / V 键</b>：漫画重拳近战击退 (POW!)</li>
+              <li><b>按住 G 键</b>：移动鼠标预瞄抛物线与落点，松开投掷手雷 · 右键取消（首局 1 颗，每晋级 +2 颗）</li>
+              <li><b>E 键</b>：漫画重拳近战击退 (POW!)</li>
               <li><b>1–4 或滚轮 / R</b>：切换 3D 武器与换弹</li>
             </ul>
           </div>
@@ -217,13 +218,27 @@
             <ul>
               <li><b>真实部位爆头</b>：瞄准头部触发 2.2x 暴击与三格分镜</li>
               <li><b>动态散布与后坐力</b>：静止/机瞄最精准，全屏枪械震感</li>
-              <li><b>多样关卡机关</b>：可踩踏移动平台、加速带、周期激光墙</li>
+              <li><b>动态地面补给</b>：医疗包与弹药每隔 20s 动态刷新，临近消失会加速闪烁提示</li>
               <li><b>高爆 TNT 油桶</b>：连锁爆炸清场；支持 2–4 人局域网联机</li>
             </ul>
           </div>
         </div>
         <button id="btn-guide-close" class="comic-btn primary" type="button">明白了，返回封面</button>
       </div>
+    </div>
+
+    <!-- 自定义键位设置弹窗 -->
+    <div id="keybinds-screen" class="overlay-screen hidden">
+      <section class="comic-modal keybinds-modal" aria-labelledby="keybinds-title">
+        <div class="modal-tag">CONTROLS · KEYBINDS</div>
+        <h2 id="keybinds-title" class="modal-title">键位设置</h2>
+        <p id="keybinds-status" class="keybinds-status">点击任意按键框后按下新键即可绑定 · ESC 取消</p>
+        <div id="keybinds-list" class="keybinds-list"></div>
+        <div class="cover-actions">
+          <button id="btn-keybinds-reset" class="comic-btn secondary" type="button">恢复默认键位</button>
+          <button id="btn-keybinds-close" class="comic-btn primary" type="button">完成并返回</button>
+        </div>
+      </section>
     </div>
 
     <div id="lan-screen" class="overlay-screen hidden">
@@ -329,6 +344,7 @@
         <p class="modal-desc">点击继续即可重新锁定鼠标并回到战斗。</p>
         <div class="cover-actions">
           <button id="btn-resume" class="comic-btn primary">继续战斗</button>
+          <button id="btn-keybinds-pause" class="comic-btn secondary" type="button">键位设置</button>
           <button id="btn-retry-pause" class="comic-btn secondary">重开本关</button>
           <button id="btn-restart-pause" class="comic-btn secondary">回到第 1 期</button>
           <button id="btn-home-pause" class="comic-btn secondary">回到首页</button>
