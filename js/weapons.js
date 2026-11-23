@@ -2,8 +2,9 @@ import * as THREE from "three";
 
 // 真 3D 赛璐璐 + 黑墨描边第一人称武器系统（支持右键机瞄 ADS & 近战重拳）
 export class WeaponSystem3D {
-  constructor(camera, assets, audio) {
+  constructor(camera, assets, audio, worldCamera = null) {
     this.camera = camera;
+    this.worldCamera = worldCamera || camera;
     this.assets = assets;
     this.audio = audio;
 
@@ -829,7 +830,13 @@ export class WeaponSystem3D {
   }
 
   getMuzzleWorldPosition(target = new THREE.Vector3()) {
-    return this.currentModel.muzzle.getWorldPosition(target);
+    this.camera?.updateMatrixWorld(true);
+    this.currentModel.muzzle.getWorldPosition(target);
+    if (this.worldCamera && this.worldCamera !== this.camera) {
+      this.worldCamera.updateMatrixWorld();
+      target.applyMatrix4(this.worldCamera.matrixWorld);
+    }
+    return target;
   }
 
   update(dt, isMoving, slideAmount = 0) {

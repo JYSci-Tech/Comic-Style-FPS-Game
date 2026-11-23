@@ -5,6 +5,10 @@ import { WeaponSystem3D } from "./weapons.js";
 
 const MAX_RENDER_PIXELS = 2_600_000;
 const SHADOW_INTERVAL_MS = 1000 / 20;
+const PICKUP_LIFETIME = 20.0;
+const PICKUP_WARN_WINDOW = 6.5;
+const PICKUP_RESPAWN_MIN = 2.6;
+const PICKUP_RESPAWN_MAX = 5.4;
 
 export function createPlayer() {
   return {
@@ -62,8 +66,24 @@ export class ComicFPS3DEngine {
     this.camera.rotation.order = "YXZ";
     this.scene.add(this.camera);
 
+    // 独立深度隔离第一人称武器渲染通道，彻底杜绝贴墙时枪管与拳套穿模
+    if (glCanvas) {
+      this.weaponScene = new THREE.Scene();
+      this.weaponCamera = new THREE.PerspectiveCamera(this.baseFov, 16 / 9, 0.04, 10);
+      this.weaponScene.add(this.weaponCamera);
+      this._weaponHemiLight = new THREE.HemisphereLight(0xffffff, 0x262038, 1.2);
+      this._weaponDirLight = new THREE.DirectionalLight(0xffffff, 1.45);
+      this._weaponDirLight.position.set(3, 6, 4);
+      this.weaponScene.add(this._weaponHemiLight, this._weaponDirLight);
+    }
+
     // 3D 第一人称武器系统
-    this.weapons = new WeaponSystem3D(glCanvas ? this.camera : null, this.assets, this.audio);
+    this.weapons = new WeaponSystem3D(
+      glCanvas ? this.weaponCamera : null,
+      this.assets,
+      this.audio,
+      glCanvas ? this.camera : null
+    );
 
     this.levelRoot = new THREE.Group();
     this.scene.add(this.levelRoot);
@@ -85,6 +105,9 @@ export class ComicFPS3DEngine {
     this.movers = [];
     this.lasers = [];
     this.levelTime = 0;
+    this.sceneryColliders = [];
+    this._cameraObstacleBoxes = [];
+    this._menuOrbitProfile = null;
     this.enemyProjectiles = [];
     this.projectileId = 0;
     this.grenades = [];
@@ -131,6 +154,10 @@ export class ComicFPS3DEngine {
     const h = Math.max(1, window.innerHeight);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (this.weaponCamera) {
+      this.weaponCamera.aspect = w / h;
+      this.weaponCamera.updateProjectionMatrix();
+    }
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const renderDpr = Math.min(dpr, Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / (w * h))));
     this.renderer.setDrawingBufferSize(w, h, renderDpr);
@@ -220,6 +247,9 @@ export class ComicFPS3DEngine {
     this.movers = [];
     this.lasers = [];
     this.levelTime = 0;
+    this.sceneryColliders = [];
+    this._cameraObstacleBoxes = [];
+    this._menuOrbitProfile = null;
     this.enemyProjectiles = [];
     this.projectileId = 0;
     this.grenades = [];
@@ -229,6 +259,9 @@ export class ComicFPS3DEngine {
     this.shockwaves = [];
     this.popups = [];
     this.hitTargets = [];
+    this.sceneryColliders = [];
+    this._cameraObstacleBoxes = [];
+    this._menuOrbitProfile = null;
 
     const worldW = this.mapW * CELL_SIZE;
     const worldH = this.mapH * CELL_SIZE;
@@ -242,22 +275,23 @@ export class ComicFPS3DEngine {
     }
     this._buildLevelArchitecture(lvl);
 
-    // 街区主题细节：路灯、红绿灯、报刊亭、候车亭、露天咖啡座、杂物与各街区专属地标；非街区室内/天台/实验室同样构建合批精细环境
-    if (this.renderer) {
-      if (lvl.streetTheme) {
-        this._buildStreetBlockFurniture(lvl);
-        this._buildDistrictLandmarks(lvl);
-      } else {
-        this._buildArenaEnvironmentDetails(lvl);
-      }
+    // 街区主题细节与碰撞盒（无渲染头节点 LAN 服务端同样计算，保持双端碰撞 100% 一致）
+    if (lvl.streetTheme) {
+      this._buildStreetBlockFurniture(lvl);
+      this._buildDistrictLandmarks(lvl);
+    } else {
+      this._buildArenaEnvironmentDetails(lvl);
     }
 
     // 漫画城市天际线 & 大太阳背景
     if (this.renderer) this._buildComicSkyline(worldW, worldH, lvl);
     this.streetScenery?.build();
+    this._buildMenuOrbitProfile();
 
     // 玩家出生点
-    this.player.pos.set(lvl.playerStart.x * CELL_SIZE, 0, lvl.playerStart.z * CELL_SIZE);
+    const startX = lvl.playerStart.x * CELL_SIZE;
+    const startZ = lvl.playerStart.z * CELL_SIZE;
+    this.player.pos.set(startX, this._groundHeightAt(startX, startZ), startZ);
     this.player.velY = 0;
     this.player.onGround = true;
     this.player.yaw = lvl.playerStart.yaw;
@@ -285,8 +319,26 @@ export class ComicFPS3DEngine {
 
     // 生成 3D 关节敌人
     if (!arena) lvl.enemies.forEach((e, idx) => this._spawnEnemy(e, idx));
-    // 生成 3D 道具与油桶
+    // 生成 3D 道具与油桶，并适度提高地上补给道具（医疗包/弹药）密度 + 错峰 20s 生命周期
+    this._openPickupCells = this._collectOpenPickupCells();
     lvl.props.forEach((p, idx) => this._spawnProp(p, idx));
+    const basePickups = lvl.props.filter((p) => this._isDynamicPickup(p.type));
+    const extraCount = Math.max(2, Math.ceil(basePickups.length * 0.6));
+    for (let k = 0; k < extraCount; k++) {
+      const type = k % 2 === 0 ? "medkit" : "ammo";
+      const spot = this._pickDynamicPickupSpot([], k);
+      if (spot) {
+        this._spawnProp({ type, x: spot.x / CELL_SIZE, z: spot.z / CELL_SIZE }, lvl.props.length + k);
+      }
+    }
+    let dynIdx = 0;
+    for (const pr of this.props) {
+      if (!this._isDynamicPickup(pr.type)) continue;
+      pr.life = 11.0 + ((dynIdx * 3.7) % 9.0);
+      pr.respawnTimer = 0;
+      pr.blinkPhase = 0;
+      dynIdx++;
+    }
     // 生成移动方块/浮空平台与周期激光封锁线
     if (lvl.movers) lvl.movers.forEach((m, idx) => this._spawnMover(m, idx));
     if (lvl.lasers) lvl.lasers.forEach((l, idx) => this._spawnLaser(l, idx));
@@ -302,6 +354,7 @@ export class ComicFPS3DEngine {
     this.scene.fog = new THREE.FogExp2(lvl.fogColor, fogDensity);
 
     this.levelRoot.add(new THREE.HemisphereLight(lvl.ambientColor, 0x262038, 1.15));
+    this._weaponHemiLight?.color.setHex(lvl.ambientColor);
     const sun = new THREE.DirectionalLight(0xffffff, 1.65);
     sun.position.set(worldW / 2 + 24, 46, worldH / 2 + 18);
     sun.target.position.set(worldW / 2, 0, worldH / 2);
@@ -858,6 +911,7 @@ export class ComicFPS3DEngine {
           this.hitTargets.push(wall);
 
           this.streetScenery?.addSolid("box", 0x16161e, [wx, guardH + 0.12, wz], [bw + 0.14, 0.24, bd + 0.14]);
+          this._addCameraObstacleBox(wx - bw / 2 - 0.5, wx + bw / 2 + 0.5, wz - bd / 2 - 0.5, wz + bd / 2 + 0.5, guardH + 0.4);
         } else if (lvl.streetTheme) {
           // 街区内部：生成外观、层高、屋顶截然不同的独立建筑（装饰部件全合批进 StreetScenery）
           this._spawnDistinctCityBuilding(cell, x, z, wCells, dCells, wx, wz, bw, bd);
@@ -877,6 +931,7 @@ export class ComicFPS3DEngine {
           this.hitTargets.push(wall);
 
           this.streetScenery?.addSolid("box", 0x16161e, [wx, baseWallH + 0.14, wz], [bw + 0.14, 0.28, bd + 0.14]);
+          this._addCameraObstacleBox(wx - bw / 2 - 0.5, wx + bw / 2 + 0.5, wz - bd / 2 - 0.5, wz + bd / 2 + 0.5, baseWallH + 0.5);
         }
       }
     }
@@ -914,6 +969,23 @@ export class ComicFPS3DEngine {
     this._freezeStatic(building);
     this.levelRoot.add(building);
     this.hitTargets.push(building);
+
+    const crownAllowance =
+      cell === 2 ? 8.6 :
+      cell === 4 ? 6.0 :
+      cell === 15 ? 6.6 :
+      cell === 11 ? 5.4 :
+      cell === 13 ? Math.max(4.2, 2.8 + Math.min(bw, bd) * 0.56) :
+      4.0;
+    const overhangPadX = cell === 11 ? 0.9 : 0.75;
+    const overhangPadZ = cell === 12 ? 1.45 : cell === 11 ? 0.9 : 0.75;
+    this._addCameraObstacleBox(
+      wx - bw / 2 - overhangPadX,
+      wx + bw / 2 + overhangPadX,
+      wz - bd / 2 - overhangPadZ,
+      wz + bd / 2 + overhangPadZ,
+      bh + crownAllowance
+    );
 
     if (!this.renderer) return;
 
@@ -991,13 +1063,13 @@ export class ComicFPS3DEngine {
     }
   }
 
-  // 为全部 6 张街区地图构建截然不同的标志性大场景立体地标（全部合批进 StreetScenery，兼顾超高精细度与极致帧率）
+  // 为全部 6 张街区地图构建截然不同的标志性大场景立体地标与物理/视角包围盒
   _buildDistrictLandmarks(lvl) {
     const sc = this.streetScenery;
-    if (!sc) return;
 
-    // 真实垂坠悬链电线 + 精致吊绳挂灯 / 节庆彩旗（绳索按抛物悬链逐段连接，每盏灯均带清晰吊绳）
+    // 真实垂坠悬链电线 + 精致吊绳挂灯 / 节庆彩旗（跳过实心建筑内部的挂灯，彻底杜绝穿模）
     const addHangingCable = (x1, z1, x2, z2, y, colors, style = "lantern") => {
+      if (!sc) return;
       const wx1 = x1 * CELL_SIZE;
       const wz1 = z1 * CELL_SIZE;
       const wx2 = x2 * CELL_SIZE;
@@ -1026,6 +1098,8 @@ export class ComicFPS3DEngine {
       for (let i = 1; i < count; i++) {
         const t = i / count;
         const [lx, cy, lz] = pointAt(t);
+        const c = this._cellAt(lx, lz);
+        if (c > 0 && !this._isLowCoverCell(c)) continue;
         const col = colors[(i + Math.floor(x1 + z1)) % colors.length];
         if (style === "bunting") {
           // 彩旗直接绑在垂坠主绳上，并穿插短吊绳暖光灯泡
@@ -1046,22 +1120,42 @@ export class ComicFPS3DEngine {
       // ISSUE #1 市中心暗巷：垂坠电线 + 复古工业搪瓷罩吊灯 + 美漫铁艺消防逃生梯
       addHangingCable(2.0, 4.5, 11.5, 4.0, 5.4, [0xffe01b, 0xff7a2a, 0x00e5ff], "bulb");
       addHangingCable(3.5, 7.2, 11.5, 8.2, 5.2, [0xff5a2a, 0xffe01b], "bulb");
-      sc.addFireEscape(6.0 * CELL_SIZE, 0.16, 4.95 * CELL_SIZE, Math.PI, 2);
-      sc.addFireEscape(9.95 * CELL_SIZE, 0.16, 4.05 * CELL_SIZE, 0, 1);
-      sc.addFireEscape(8.95 * CELL_SIZE, 0.16, 8.0 * CELL_SIZE, Math.PI, 2);
+      if (sc) {
+        sc.addFireEscape(6.0 * CELL_SIZE, 0.16, 4.95 * CELL_SIZE, Math.PI, 2);
+        sc.addFireEscape(9.95 * CELL_SIZE, 0.16, 4.05 * CELL_SIZE, 0, 1);
+        sc.addFireEscape(8.95 * CELL_SIZE, 0.16, 8.0 * CELL_SIZE, Math.PI, 2);
+      }
     } else if (lvl.districtStyle === "chinatown") {
       // ISSUE #2 落日唐人街：跨越主干道的朱红鎏金中式牌楼 + 纵横交错的红金垂坠吊绳灯笼索道
       const buildArchway = (wx, wz, span, rotateY = 0) => {
-        const part = sc._makePartHelper(wx, 0, wz, rotateY);
         const c = Math.cos(rotateY);
         const s = Math.sin(rotateY);
+        const absC = Math.abs(c);
+        const absS = Math.abs(s);
+        for (const px of [-span * 0.5, span * 0.5]) {
+          const colX = wx + px * c;
+          const colZ = wz - px * s;
+          this._addSceneryCollider(colX, colZ, 0.48, 0.48, 6.2);
+          if (sc) {
+            const lx = wx + (px * 0.72) * c;
+            const lz = wz - (px * 0.72) * s;
+            sc.addHangingLantern(lx, 5.3, lz, 0.45, 0xff2a38, "lantern");
+          }
+        }
+        const halfSpan = span * 0.5 + 1.4;
+        const halfDepth = 0.9;
+        this._addCameraObstacleBox(
+          wx - (halfSpan * absC + halfDepth * absS),
+          wx + (halfSpan * absC + halfDepth * absS),
+          wz - (halfSpan * absS + halfDepth * absC),
+          wz + (halfSpan * absS + halfDepth * absC),
+          7.4
+        );
+        if (!sc) return;
+        const part = sc._makePartHelper(wx, 0, wz, rotateY);
         for (const px of [-span * 0.5, span * 0.5]) {
           part("cylinder", 0xd92027, px, 3.1, 0, 0.62, 6.2, 0.62);
           part("box", 0x5c2020, px, 0.32, 0, 0.96, 0.64, 0.96);
-          // 牌楼横梁两侧吊绳挂灯
-          const lx = wx + (px * 0.72) * c;
-          const lz = wz - (px * 0.72) * s;
-          sc.addHangingLantern(lx, 5.3, lz, 0.45, 0xff2a38, "lantern");
         }
         part("box", 0xffcf26, 0, 5.7, 0, span + 1.4, 0.85, 0.72);
         part("box", 0xd92027, 0, 5.7, 0.4, 3.2, 0.65, 0.14);
@@ -1080,49 +1174,72 @@ export class ComicFPS3DEngine {
       const deckLen = (this.mapW - 2) * CELL_SIZE;
       const deckX = this.mapW * 0.5 * CELL_SIZE;
       const deckZ = 10.0 * CELL_SIZE;
-      sc.addSolid("box", 0x3b4859, [deckX, railY, deckZ], [deckLen, 0.75, 4.4]);
-      sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ - 2.1], [deckLen, 0.45, 0.25]);
-      sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ + 2.1], [deckLen, 0.45, 0.25]);
-      // 桥腹工字钢横肋与高架接触网门架
-      for (let gx = 4; gx < this.mapW - 3; gx += 5) {
-        const px = gx * CELL_SIZE;
-        sc.addSolid("box", 0x263140, [px, railY - 0.55, deckZ], [0.75, 0.45, 4.7]);
-        sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ - 2.25], [0.24, 4.2, 0.24]);
-        sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ + 2.25], [0.24, 4.2, 0.24]);
-        sc.addSolid("box", 0x4b5b70, [px, railY + 4.7, deckZ], [0.26, 0.26, 4.8]);
-        sc.addEmissive("box", gx % 2 === 0 ? 0xffae19 : 0x00e5ff, [px, railY + 4.4, deckZ], [0.32, 0.22, 0.65]);
+      this._addCameraObstacleBox(0, this.mapW * CELL_SIZE, deckZ - 2.9, deckZ + 2.9, railY + 5.2);
+      if (sc) {
+        sc.addSolid("box", 0x3b4859, [deckX, railY, deckZ], [deckLen, 0.75, 4.4]);
+        sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ - 2.1], [deckLen, 0.45, 0.25]);
+        sc.addSolid("box", 0xffae19, [deckX, railY + 0.6, deckZ + 2.1], [deckLen, 0.45, 0.25]);
+        // 桥腹工字钢横肋与高架接触网门架
+        for (let gx = 4; gx < this.mapW - 3; gx += 5) {
+          const px = gx * CELL_SIZE;
+          sc.addSolid("box", 0x263140, [px, railY - 0.55, deckZ], [0.75, 0.45, 4.7]);
+          sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ - 2.25], [0.24, 4.2, 0.24]);
+          sc.addSolid("box", 0x4b5b70, [px, railY + 2.6, deckZ + 2.25], [0.24, 4.2, 0.24]);
+          sc.addSolid("box", 0x4b5b70, [px, railY + 4.7, deckZ], [0.26, 0.26, 4.8]);
+          sc.addEmissive("box", gx % 2 === 0 ? 0xffae19 : 0x00e5ff, [px, railY + 4.4, deckZ], [0.32, 0.22, 0.65]);
+        }
+        // 高架桥停靠的美漫红色涂鸦地铁列车（含车窗与车头灯）
+        const trainX = this.mapW * 0.55 * CELL_SIZE;
+        sc.addSolid("box", 0xd92638, [trainX, railY + 1.65, deckZ], [18.0, 2.5, 3.2]);
+        sc.addSolid("box", 0x202534, [trainX, railY + 2.95, deckZ], [17.4, 0.26, 2.8]);
+        for (let w = -6.5; w <= 6.5; w += 2.6) {
+          sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ + 1.62], [1.65, 0.85, 0.08]);
+          sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ - 1.62], [1.65, 0.85, 0.08]);
+        }
+        sc.addEmissive("box", 0xfff5c0, [trainX - 9.05, railY + 1.15, deckZ], [0.12, 0.42, 1.8]);
       }
-      // 高架桥停靠的美漫红色涂鸦地铁列车（含车窗与车头灯）
-      const trainX = this.mapW * 0.55 * CELL_SIZE;
-      sc.addSolid("box", 0xd92638, [trainX, railY + 1.65, deckZ], [18.0, 2.5, 3.2]);
-      sc.addSolid("box", 0x202534, [trainX, railY + 2.95, deckZ], [17.4, 0.26, 2.8]);
-      for (let w = -6.5; w <= 6.5; w += 2.6) {
-        sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ + 1.62], [1.65, 0.85, 0.08]);
-        sc.addEmissive("box", 0xffe885, [trainX + w, railY + 1.85, deckZ - 1.62], [1.65, 0.85, 0.08]);
-      }
-      sc.addEmissive("box", 0xfff5c0, [trainX - 9.05, railY + 1.15, deckZ], [0.12, 0.42, 1.8]);
       // 海港跨街钢缆吊绳工业灯
       addHangingCable(3.5, 2.5, 13.5, 3.0, 5.6, [0xffae19, 0x00e5ff], "bulb");
       addHangingCable(14.5, 14.5, 23.5, 15.0, 5.6, [0xffae19, 0xff5a2a], "bulb");
     } else if (lvl.districtStyle === "metropolis") {
-      // ISSUE #6 大都会环形金融广场：合批实例化翠绿行道树 + 石材修剪绿篱 + 跨街 Art-Deco 金色凯旋横幅门
+      // ISSUE #6 大都会环形金融广场：合批实例化翠绿行道树（贴墙安全间距检测）+ 石材修剪绿篱 + 跨街 Art-Deco 金色凯旋横幅门
+      const metroReserved = [];
+      if (lvl.playerStart) metroReserved.push([lvl.playerStart.x * CELL_SIZE, lvl.playerStart.z * CELL_SIZE, 3.4]);
+      for (const e of lvl.enemies || []) metroReserved.push([e.x * CELL_SIZE, e.z * CELL_SIZE, 2.4]);
+      for (const p of lvl.props || []) metroReserved.push([p.x * CELL_SIZE, p.z * CELL_SIZE, 2.4]);
+      const isMetroTreeClear = (tx, tz) => {
+        if (!this._hasWallClearance(tx, tz, 1.42)) return false;
+        for (let i = 0; i < metroReserved.length; i++) {
+          const [rx, rz, rr] = metroReserved[i];
+          if ((tx - rx) ** 2 + (tz - rz) ** 2 < rr * rr) return false;
+        }
+        return true;
+      };
       for (let z = 3; z < this.mapH - 3; z += 5) {
         for (let x = 3; x < this.mapW - 3; x += 6) {
           if (!this.sidewalkGrid?.[z]?.[x] || this.map[z][x] !== 0) continue;
-          const wx = (x + 0.5) * CELL_SIZE + 1.1;
-          const wz = (z + 0.5) * CELL_SIZE + 1.1;
-          sc.addTree(wx, 0.16, wz, 0.95, 0x2ecc71, true);
+          const wx = (x + 0.5) * CELL_SIZE;
+          const wz = (z + 0.5) * CELL_SIZE;
+          if (!isMetroTreeClear(wx, wz)) continue;
+          sc?.addTree(wx, 0.16, wz, 0.95, 0x2ecc71, true);
+          this._addSceneryCollider(wx, wz, 0.48, 0.48, 0.16 + 3.2);
         }
       }
       // 中央银行大道石材绿篱与 Art-Deco 金融拱门
       for (const gx of [10, 19]) {
         const ax = gx * CELL_SIZE + 2.0;
-        sc.addSolid("box", 0xd4af37, [ax, 5.9, 9.5 * CELL_SIZE], [0.55, 0.85, 11.6]);
-        sc.addEmissive("box", 0x00e5ff, [ax, 6.45, 9.5 * CELL_SIZE], [0.22, 0.22, 10.6]);
+        this._addCameraObstacleBox(ax - 0.65, ax + 0.65, 9.5 * CELL_SIZE - 6.2, 9.5 * CELL_SIZE + 6.2, 7.0);
+        if (sc) {
+          sc.addSolid("box", 0xd4af37, [ax, 5.9, 9.5 * CELL_SIZE], [0.55, 0.85, 11.6]);
+          sc.addEmissive("box", 0x00e5ff, [ax, 6.45, 9.5 * CELL_SIZE], [0.22, 0.22, 10.6]);
+        }
       }
       for (const [hx, hz, rot] of [[14.5, 4.2, 0], [14.5, 14.8, 0], [5.2, 9.5, Math.PI / 2], [24.8, 9.5, Math.PI / 2]]) {
         if (this.map[Math.floor(hz)]?.[Math.floor(hx)] === 0) {
-          sc.addPlanterHedge(hx * CELL_SIZE, 0.16, hz * CELL_SIZE, rot, 0x27ae60);
+          const hwx = hx * CELL_SIZE;
+          const hwz = hz * CELL_SIZE;
+          sc?.addPlanterHedge(hwx, 0.16, hwz, rot, 0x27ae60);
+          this._addRotatedSceneryCollider(hwx, hwz, 1.12, 0.46, rot, 0.16 + 1.25);
         }
       }
     } else if (lvl.districtStyle === "nightmarket") {
@@ -1134,6 +1251,10 @@ export class ComicFPS3DEngine {
         const mx = ((x1 + x2) * 0.5) * CELL_SIZE;
         const mz = ((z1 + z2) * 0.5) * CELL_SIZE;
         const angle = Math.atan2(dx, dz);
+        const hw = Math.abs(Math.cos(angle)) * 1.9 + Math.abs(Math.sin(angle)) * (len * 0.5);
+        const hd = Math.abs(Math.sin(angle)) * 1.9 + Math.abs(Math.cos(angle)) * (len * 0.5);
+        this._addCameraObstacleBox(mx - hw, mx + hw, mz - hd, mz + hd, y + 3.0);
+        if (!sc) return;
         const part = sc._makePartHelper(mx, y, mz, angle);
         part("box", 0x22263c, 0, 0, 0, 3.2, 0.55, len);
         part("box", trimColor, -1.5, 0.85, 0, 0.24, 1.35, len);
@@ -1151,44 +1272,55 @@ export class ComicFPS3DEngine {
       addHangingCable(14.5, 16.5, 22.0, 12.0, 6.2, lanternColors, "lantern");
       addHangingCable(14.0, 18.0, 21.5, 18.8, 5.6, lanternColors, "lantern");
       addHangingCable(26.5, 5.5, 31.5, 9.5, 5.9, lanternColors, "lantern");
-      addHangingCable(4.5, 7.5, 10.5, 11.5, 5.7, lanternColors, "lantern");
+      addHangingCable(7.0, 10.5, 14.0, 13.2, 5.7, lanternColors, "lantern");
     } else if (lvl.districtStyle === "oldquarter") {
       // ISSUE #8 老城运河弯街与大巴扎钟楼区：跨街石拱高架水道桥 + 中央四向穿行大钟楼拱门亭 + 垂坠彩旗与暖光吊灯（全合批！）
       const archY = 6.4;
       const archZ = 19.5 * CELL_SIZE;
       const spanLen = (this.mapW - 4) * CELL_SIZE;
       const midX = this.mapW * 0.5 * CELL_SIZE;
-      sc.addSolid("box", 0xd6c3a3, [midX, archY, archZ], [spanLen, 1.35, 3.2]);
-      sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ - 1.42], [spanLen, 0.72, 0.36]);
-      sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ + 1.42], [spanLen, 0.72, 0.36]);
+      this._addCameraObstacleBox(2 * CELL_SIZE, (this.mapW - 2) * CELL_SIZE, archZ - 2.1, archZ + 2.1, archY + 2.4);
+      if (sc) {
+        sc.addSolid("box", 0xd6c3a3, [midX, archY, archZ], [spanLen, 1.35, 3.2]);
+        sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ - 1.42], [spanLen, 0.72, 0.36]);
+        sc.addSolid("box", 0xb09670, [midX, archY + 0.96, archZ + 1.42], [spanLen, 0.72, 0.36]);
 
-      for (let gx = 4; gx < this.mapW - 4; gx += 6) {
-        const px = gx * CELL_SIZE;
-        sc.addSolid("box", 0xc4ae8c, [px, archY - 1.1, archZ], [1.4, 1.35, 3.45]);
-        sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ - 1.45], [0.35, 0.55, 0.35]);
-        sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ + 1.45], [0.35, 0.55, 0.35]);
+        for (let gx = 4; gx < this.mapW - 4; gx += 6) {
+          const px = gx * CELL_SIZE;
+          sc.addSolid("box", 0xc4ae8c, [px, archY - 1.1, archZ], [1.4, 1.35, 3.45]);
+          sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ - 1.45], [0.35, 0.55, 0.35]);
+          sc.addEmissive("box", 0xffe87d, [px, archY + 1.65, archZ + 1.45], [0.35, 0.55, 0.35]);
+        }
       }
 
       // 中央四向穿行钟楼拱门亭 (21.5, 13.5)
       const fx = 21.5 * CELL_SIZE;
       const fz = 13.5 * CELL_SIZE;
-      sc.addSolid("cylinder", 0xe6d4b3, [fx, 0.03, fz], [8.8, 0.06, 8.8]);
-      sc.addEmissive("cylinder", 0x00d9ff, [fx, 0.045, fz], [4.2, 0.08, 4.2]);
+      this._addCameraObstacleBox(fx - 4.0, fx + 4.0, fz - 4.0, fz + 4.0, 17.0);
       for (const sx of [-2.8, 2.8]) {
         for (const sz of [-2.8, 2.8]) {
-          sc.addSolid("box", 0xd6c3a3, [fx + sx, 2.6, fz + sz], [0.85, 5.2, 0.85]);
-          sc.addSolid("box", 0xb09670, [fx + sx, 0.25, fz + sz], [1.15, 0.5, 1.15]);
+          this._addSceneryCollider(fx + sx, fz + sz, 0.58, 0.58, 5.2);
         }
       }
-      sc.addSolid("box", 0xb09670, [fx, 5.65, fz], [7.0, 1.1, 7.0]);
-      sc.addSolid("box", 0xd6c3a3, [fx, 8.4, fz], [4.6, 4.4, 4.6]);
-      // 四面发光金色大钟盘
-      for (const [dx, dz, rw, rd] of [[0, 2.36, 2.5, 0.16], [0, -2.36, 2.5, 0.16], [2.36, 0, 0.16, 2.5], [-2.36, 0, 0.16, 2.5]]) {
-        sc.addSolid("box", 0xd4af37, [fx + dx, 8.6, fz + dz], [rw, 2.5, rd]);
-        sc.addEmissive("box", 0xfff3c4, [fx + dx * 1.03, 8.6, fz + dz * 1.03], [rw === 0.16 ? 0.10 : 2.05, 2.05, rd === 0.16 ? 0.10 : 2.05]);
+      if (sc) {
+        sc.addSolid("cylinder", 0xe6d4b3, [fx, 0.03, fz], [8.8, 0.06, 8.8]);
+        sc.addEmissive("cylinder", 0x00d9ff, [fx, 0.045, fz], [4.2, 0.08, 4.2]);
+        for (const sx of [-2.8, 2.8]) {
+          for (const sz of [-2.8, 2.8]) {
+            sc.addSolid("box", 0xd6c3a3, [fx + sx, 2.6, fz + sz], [0.85, 5.2, 0.85]);
+            sc.addSolid("box", 0xb09670, [fx + sx, 0.25, fz + sz], [1.15, 0.5, 1.15]);
+          }
+        }
+        sc.addSolid("box", 0xb09670, [fx, 5.65, fz], [7.0, 1.1, 7.0]);
+        sc.addSolid("box", 0xd6c3a3, [fx, 8.4, fz], [4.6, 4.4, 4.6]);
+        // 四面发光金色大钟盘
+        for (const [dx, dz, rw, rd] of [[0, 2.36, 2.5, 0.16], [0, -2.36, 2.5, 0.16], [2.36, 0, 0.16, 2.5], [-2.36, 0, 0.16, 2.5]]) {
+          sc.addSolid("box", 0xd4af37, [fx + dx, 8.6, fz + dz], [rw, 2.5, rd]);
+          sc.addEmissive("box", 0xfff3c4, [fx + dx * 1.03, 8.6, fz + dz * 1.03], [rw === 0.16 ? 0.10 : 2.05, 2.05, rd === 0.16 ? 0.10 : 2.05]);
+        }
+        sc.addSolid("pyramid", 0x226878, [fx, 12.7, fz], [4.8, 4.2, 4.8]);
+        sc.addEmissive("cylinder", 0xffcf33, [fx, 15.4, fz], [0.28, 2.2, 0.28]);
       }
-      sc.addSolid("pyramid", 0x226878, [fx, 12.7, fz], [4.8, 4.2, 4.8]);
-      sc.addEmissive("cylinder", 0xffcf33, [fx, 15.4, fz], [0.28, 2.2, 0.28]);
 
       const flagColors = [0xff4b3e, 0xffcf33, 0x26b5c4, 0xff7a00, 0xf7f0d8];
       addHangingCable(16.5, 10.0, 26.5, 11.5, 6.0, flagColors, "bunting");
@@ -1198,36 +1330,37 @@ export class ComicFPS3DEngine {
     }
   }
 
-  // 为所有非街区竞技场地图（ISSUE #3 墨水工厂 / ISSUE #5 霓虹天台 / ISSUE #9 半调博士实验室）构建合批精细环境细节
+  // 为所有非街区竞技场地图（ISSUE #3 墨水工厂 / ISSUE #5 霓虹天台 / ISSUE #9 半调博士实验室）构建合批精细环境细节与碰撞盒
   _buildArenaEnvironmentDetails(lvl) {
     const sc = this.streetScenery;
-    if (!sc) return;
     const W = this.mapW;
     const H = this.mapH;
     const worldW = W * CELL_SIZE;
     const worldH = H * CELL_SIZE;
 
     // 1. 通用墙面立柱壁肋与底角防撞线（合批进 StreetScenery，彻底告别光秃秃的方块墙）
-    const isSolid = (gx, gz) => {
-      const c = this.map[gz]?.[gx] || 0;
-      return c > 0 && !this._isLowCoverCell(c);
-    };
-    const ribColor = lvl.floorTex === "factoryFloor" ? 0x394659 : lvl.floorTex === "labFloor" ? 0x3b1f5e : 0x283652;
-    const accentColor = lvl.floorTex === "factoryFloor" ? 0xffae19 : lvl.floorTex === "labFloor" ? 0x00ff99 : 0x00e5ff;
+    if (sc) {
+      const isSolid = (gx, gz) => {
+        const c = this.map[gz]?.[gx] || 0;
+        return c > 0 && !this._isLowCoverCell(c);
+      };
+      const ribColor = lvl.floorTex === "factoryFloor" ? 0x394659 : lvl.floorTex === "labFloor" ? 0x3b1f5e : 0x283652;
+      const accentColor = lvl.floorTex === "factoryFloor" ? 0xffae19 : lvl.floorTex === "labFloor" ? 0x00ff99 : 0x00e5ff;
 
-    for (let z = 0; z < H; z++) {
-      for (let x = 0; x < W; x++) {
-        if (!isSolid(x, z)) continue;
-        for (const [nx, nz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-          if (this.map[z + nz]?.[x + nx] !== 0) continue;
-          const fx = (x + 0.5 + 0.5 * nx) * CELL_SIZE;
-          const fz = (z + 0.5 + 0.5 * nz) * CELL_SIZE;
-          const horiz = nz !== 0;
-          // 墙脚防撞踢脚线 + 竖向钢结构壁柱
-          sc.addSolid("box", ribColor, [fx + nx * 0.08, 0.24, fz + nz * 0.08], [horiz ? CELL_SIZE * 0.96 : 0.16, 0.44, horiz ? 0.16 : CELL_SIZE * 0.96]);
-          if ((x + z) % 2 === 0) {
-            sc.addSolid("box", ribColor, [fx + nx * 0.14, 2.45, fz + nz * 0.14], [horiz ? 0.34 : 0.28, 4.7, horiz ? 0.28 : 0.34]);
-            sc.addEmissive("box", accentColor, [fx + nx * 0.29, 3.85, fz + nz * 0.29], [horiz ? 0.18 : 0.08, 0.65, horiz ? 0.08 : 0.18]);
+      for (let z = 0; z < H; z++) {
+        for (let x = 0; x < W; x++) {
+          if (!isSolid(x, z)) continue;
+          for (const [nx, nz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+            if (this.map[z + nz]?.[x + nx] !== 0) continue;
+            const fx = (x + 0.5 + 0.5 * nx) * CELL_SIZE;
+            const fz = (z + 0.5 + 0.5 * nz) * CELL_SIZE;
+            const horiz = nz !== 0;
+            // 墙脚防撞踢脚线 + 竖向钢结构壁柱
+            sc.addSolid("box", ribColor, [fx + nx * 0.08, 0.24, fz + nz * 0.08], [horiz ? CELL_SIZE * 0.96 : 0.16, 0.44, horiz ? 0.16 : CELL_SIZE * 0.96]);
+            if ((x + z) % 2 === 0) {
+              sc.addSolid("box", ribColor, [fx + nx * 0.14, 2.45, fz + nz * 0.14], [horiz ? 0.34 : 0.28, 4.7, horiz ? 0.28 : 0.34]);
+              sc.addEmissive("box", accentColor, [fx + nx * 0.29, 3.85, fz + nz * 0.29], [horiz ? 0.18 : 0.08, 0.65, horiz ? 0.08 : 0.18]);
+            }
           }
         }
       }
@@ -1235,77 +1368,105 @@ export class ComicFPS3DEngine {
 
     if (lvl.floorTex === "factoryFloor") {
       // 【ISSUE #3 · 墨水工厂】：钢结构屋顶桁架 + 悬挂工业暖黄吊灯 + 顶部四色 CMYK 巨型墨水管道 + 四角发光墨水巨罐
-      for (let gx = 3; gx < W - 2; gx += 4) {
-        const px = gx * CELL_SIZE;
-        sc.addSolid("box", 0x2c384a, [px, 5.45, worldH * 0.5], [0.46, 0.52, worldH - CELL_SIZE * 1.4]);
-        for (const fz of [3.5 * CELL_SIZE, 7.5 * CELL_SIZE]) {
-          sc.addSolid("box", 0x1a202c, [px, 5.05, fz], [0.95, 0.24, 0.95]);
-          sc.addEmissive("box", 0xffe885, [px, 4.88, fz], [0.76, 0.12, 0.76]);
-        }
-      }
-      // 贯穿工厂天花板的 CMYK 四色巨型输墨主管道
-      const pipeSpecs = [
-        [2.2 * CELL_SIZE, 0x00e5ff],
-        [4.2 * CELL_SIZE, 0xff2ebd],
-        [6.8 * CELL_SIZE, 0xffe01b],
-        [8.8 * CELL_SIZE, 0x2a3142],
+      this._addCameraObstacleBox(CELL_SIZE, worldW - CELL_SIZE, CELL_SIZE, worldH - CELL_SIZE, 6.6);
+      const vatSpecs = [
+        [1.7 * CELL_SIZE, 1.7 * CELL_SIZE, 0x00e5ff],
+        [1.7 * CELL_SIZE, (H - 1.7) * CELL_SIZE, 0xff2ebd],
+        [(W - 1.7) * CELL_SIZE, 1.7 * CELL_SIZE, 0xffe01b],
+        [(W - 1.7) * CELL_SIZE, (H - 1.7) * CELL_SIZE, 0x00ffaa],
       ];
-      for (const [pz, pcol] of pipeSpecs) {
-        sc.addSolid("box", pcol, [worldW * 0.5, 5.95, pz], [worldW - CELL_SIZE * 1.6, 0.56, 0.56]);
-        for (let gx = 2; gx < W - 2; gx += 3) {
-          sc.addSolid("box", 0x1b202e, [gx * CELL_SIZE, 5.95, pz], [0.22, 0.72, 0.72]);
+      for (const [vx, vz, vcol] of vatSpecs) {
+        this._addSceneryCollider(vx, vz, 0.94, 0.94, 4.2);
+        sc?.addIndustrialVat(vx, 0, vz, vcol);
+      }
+      if (sc) {
+        for (let gx = 3; gx < W - 2; gx += 4) {
+          const px = gx * CELL_SIZE;
+          sc.addSolid("box", 0x2c384a, [px, 5.45, worldH * 0.5], [0.46, 0.52, worldH - CELL_SIZE * 1.4]);
+          for (const fz of [3.5 * CELL_SIZE, 7.5 * CELL_SIZE]) {
+            sc.addSolid("box", 0x1a202c, [px, 5.05, fz], [0.95, 0.24, 0.95]);
+            sc.addEmissive("box", 0xffe885, [px, 4.88, fz], [0.76, 0.12, 0.76]);
+          }
+        }
+        // 贯穿工厂天花板的 CMYK 四色巨型输墨主管道
+        const pipeSpecs = [
+          [2.2 * CELL_SIZE, 0x00e5ff],
+          [4.2 * CELL_SIZE, 0xff2ebd],
+          [6.8 * CELL_SIZE, 0xffe01b],
+          [8.8 * CELL_SIZE, 0x2a3142],
+        ];
+        for (const [pz, pcol] of pipeSpecs) {
+          sc.addSolid("box", pcol, [worldW * 0.5, 5.95, pz], [worldW - CELL_SIZE * 1.6, 0.56, 0.56]);
+          for (let gx = 2; gx < W - 2; gx += 3) {
+            sc.addSolid("box", 0x1b202e, [gx * CELL_SIZE, 5.95, pz], [0.22, 0.72, 0.72]);
+          }
         }
       }
-      // 四角墨水巨罐（贴角安全位）
-      sc.addIndustrialVat(1.7 * CELL_SIZE, 0, 1.7 * CELL_SIZE, 0x00e5ff);
-      sc.addIndustrialVat(1.7 * CELL_SIZE, 0, (H - 1.7) * CELL_SIZE, 0xff2ebd);
-      sc.addIndustrialVat((W - 1.7) * CELL_SIZE, 0, 1.7 * CELL_SIZE, 0xffe01b);
-      sc.addIndustrialVat((W - 1.7) * CELL_SIZE, 0, (H - 1.7) * CELL_SIZE, 0x00ffaa);
     } else if (lvl.floorTex === "asphalt") {
       // 【ISSUE #5 · 霓虹高速天台】：四周天台钢护栏 + 中心发光直升机停机坪 H 标识 + 四角无线电信号塔 + 屋顶霓虹广告牌
-      const paintMat = new THREE.MeshBasicMaterial({ color: 0xffe01b, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
-      const hx = worldW * 0.5;
-      const hz = worldH * 0.5;
-      // 停机坪 H 标志与外框
-      sc.add("paint", paintMat, [hx - 1.8, 0.01, hz], [0.55, 1, 5.2]);
-      sc.add("paint", paintMat, [hx + 1.8, 0.01, hz], [0.55, 1, 5.2]);
-      sc.add("paint", paintMat, [hx, 0.01, hz], [3.6, 1, 0.55]);
-      sc.add("paint", paintMat, [hx, 0.01, hz - 4.4], [9.2, 1, 0.35]);
-      sc.add("paint", paintMat, [hx, 0.01, hz + 4.4], [9.2, 1, 0.35]);
-      sc.add("paint", paintMat, [hx - 4.4, 0.01, hz], [0.35, 1, 9.2]);
-      sc.add("paint", paintMat, [hx + 4.4, 0.01, hz], [0.35, 1, 9.2]);
-      // 墙顶霓虹导光护栏与四角高耸无线电信号塔
-      sc.addEmissive("box", 0x00e5ff, [worldW * 0.5, 5.25, 0.5 * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
-      sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 5.25, (H - 0.5) * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
-      sc.addRadioMast(0.5 * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 7.5, 0xff2a44);
-      sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 8.5, 0x00e5ff);
-      sc.addRadioMast(0.5 * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 7.0, 0xffe01b);
-      sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 8.0, 0xff2ebd);
-      // 墙顶巨型漫画霓虹灯箱广告架
-      sc.addRooftopDetail(2, worldW * 0.5, 4.95, 0.5 * CELL_SIZE, 9.5, 2.2);
-      sc.addRooftopDetail(2, worldW * 0.5, 4.95, (H - 0.5) * CELL_SIZE, 9.5, 2.2);
+      for (const [mx, mz] of [
+        [0.5 * CELL_SIZE, 0.5 * CELL_SIZE],
+        [(W - 0.5) * CELL_SIZE, 0.5 * CELL_SIZE],
+        [0.5 * CELL_SIZE, (H - 0.5) * CELL_SIZE],
+        [(W - 0.5) * CELL_SIZE, (H - 0.5) * CELL_SIZE],
+      ]) {
+        this._addCameraObstacleBox(mx - 1.6, mx + 1.6, mz - 1.6, mz + 1.6, 14.0);
+      }
+      this._addCameraObstacleBox(worldW * 0.5 - 5.2, worldW * 0.5 + 5.2, 0.5 * CELL_SIZE - 0.8, 0.5 * CELL_SIZE + 0.8, 8.6);
+      this._addCameraObstacleBox(worldW * 0.5 - 5.2, worldW * 0.5 + 5.2, (H - 0.5) * CELL_SIZE - 0.8, (H - 0.5) * CELL_SIZE + 0.8, 8.6);
+      if (sc) {
+        const paintMat = new THREE.MeshBasicMaterial({ color: 0xffe01b, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+        const hx = worldW * 0.5;
+        const hz = worldH * 0.5;
+        // 停机坪 H 标志与外框
+        sc.add("paint", paintMat, [hx - 1.8, 0.01, hz], [0.55, 1, 5.2]);
+        sc.add("paint", paintMat, [hx + 1.8, 0.01, hz], [0.55, 1, 5.2]);
+        sc.add("paint", paintMat, [hx, 0.01, hz], [3.6, 1, 0.55]);
+        sc.add("paint", paintMat, [hx, 0.01, hz - 4.4], [9.2, 1, 0.35]);
+        sc.add("paint", paintMat, [hx, 0.01, hz + 4.4], [9.2, 1, 0.35]);
+        sc.add("paint", paintMat, [hx - 4.4, 0.01, hz], [0.35, 1, 9.2]);
+        sc.add("paint", paintMat, [hx + 4.4, 0.01, hz], [0.35, 1, 9.2]);
+        // 墙顶霓虹导光护栏与四角高耸无线电信号塔
+        sc.addEmissive("box", 0x00e5ff, [worldW * 0.5, 5.25, 0.5 * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
+        sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 5.25, (H - 0.5) * CELL_SIZE], [worldW - 2, 0.24, 0.24]);
+        sc.addRadioMast(0.5 * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 7.5, 0xff2a44);
+        sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, 0.5 * CELL_SIZE, 8.5, 0x00e5ff);
+        sc.addRadioMast(0.5 * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 7.0, 0xffe01b);
+        sc.addRadioMast((W - 0.5) * CELL_SIZE, 4.8, (H - 0.5) * CELL_SIZE, 8.0, 0xff2ebd);
+        // 墙顶巨型漫画霓虹灯箱广告架
+        sc.addRooftopDetail(2, worldW * 0.5, 4.95, 0.5 * CELL_SIZE, 9.5, 2.2);
+        sc.addRooftopDetail(2, worldW * 0.5, 4.95, (H - 0.5) * CELL_SIZE, 9.5, 2.2);
+      }
     } else if (lvl.floorTex === "labFloor") {
       // 【ISSUE #9 · 半调博士终极实验室】：高空悬吊褪色射线核心环 + 地面汇聚能量导管 + 四角发光反派培养舱
       const cx = worldW * 0.56;
       const cz = worldH * 0.5;
-      // 地面汇聚向 Boss 区域的霓虹能量槽
-      sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 0.03, cz], [worldW - CELL_SIZE * 2.4, 0.05, 0.36]);
-      sc.addEmissive("box", 0x00ff99, [cx, 0.03, worldH * 0.5], [0.36, 0.05, worldH - CELL_SIZE * 2.4]);
-      // 上空悬吊的巨型八角「全城褪色射线」主反应环（y = 6.2m，抬头震撼！）
-      for (let i = 0; i < 8; i++) {
-        const ang = (i / 8) * Math.PI * 2;
-        const rx = cx + Math.cos(ang) * 5.2;
-        const rz = cz + Math.sin(ang) * 5.2;
-        sc.addSolid("box", 0x2b174a, [rx, 6.2, rz], [4.2, 0.72, 0.78], -ang + Math.PI / 2);
-        sc.addEmissive("box", i % 2 === 0 ? 0xff2ebd : 0x00ff99, [rx, 6.2, rz], [3.6, 0.28, 0.88], -ang + Math.PI / 2);
+      this._addCameraObstacleBox(cx - 7.8, cx + 7.8, cz - 7.8, cz + 7.8, 10.4);
+      const podSpecs = [
+        [1.65 * CELL_SIZE, 1.65 * CELL_SIZE, 0, 0x00ff99],
+        [1.65 * CELL_SIZE, (H - 1.65) * CELL_SIZE, Math.PI, 0xff2ebd],
+        [(W - 1.65) * CELL_SIZE, 1.65 * CELL_SIZE, 0, 0x00e5ff],
+        [(W - 1.65) * CELL_SIZE, (H - 1.65) * CELL_SIZE, Math.PI, 0xffe01b],
+      ];
+      for (const [px, pz, prot, pcol] of podSpecs) {
+        this._addSceneryCollider(px, pz, 0.72, 0.72, 3.8);
+        sc?.addLabPod(px, 0, pz, prot, pcol);
       }
-      sc.addEmissive("sphere", 0xff2ebd, [cx, 6.2, cz], [2.4, 2.4, 2.4]);
-      sc.addSolid("cylinder", 0x1e1136, [cx, 8.2, cz], [1.2, 3.2, 1.2]);
-      // 四角发光实验培养舱
-      sc.addLabPod(1.65 * CELL_SIZE, 0, 1.65 * CELL_SIZE, 0, 0x00ff99);
-      sc.addLabPod(1.65 * CELL_SIZE, 0, (H - 1.65) * CELL_SIZE, Math.PI, 0xff2ebd);
-      sc.addLabPod((W - 1.65) * CELL_SIZE, 0, 1.65 * CELL_SIZE, 0, 0x00e5ff);
-      sc.addLabPod((W - 1.65) * CELL_SIZE, 0, (H - 1.65) * CELL_SIZE, Math.PI, 0xffe01b);
+      if (sc) {
+        // 地面汇聚向 Boss 区域的霓虹能量槽
+        sc.addEmissive("box", 0xff2ebd, [worldW * 0.5, 0.03, cz], [worldW - CELL_SIZE * 2.4, 0.05, 0.36]);
+        sc.addEmissive("box", 0x00ff99, [cx, 0.03, worldH * 0.5], [0.36, 0.05, worldH - CELL_SIZE * 2.4]);
+        // 上空悬吊的巨型八角「全城褪色射线」主反应环（y = 6.2m，抬头震撼！）
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * Math.PI * 2;
+          const rx = cx + Math.cos(ang) * 5.2;
+          const rz = cz + Math.sin(ang) * 5.2;
+          sc.addSolid("box", 0x2b174a, [rx, 6.2, rz], [4.2, 0.72, 0.78], -ang + Math.PI / 2);
+          sc.addEmissive("box", i % 2 === 0 ? 0xff2ebd : 0x00ff99, [rx, 6.2, rz], [3.6, 0.28, 0.88], -ang + Math.PI / 2);
+        }
+        sc.addEmissive("sphere", 0xff2ebd, [cx, 6.2, cz], [2.4, 2.4, 2.4]);
+        sc.addSolid("cylinder", 0x1e1136, [cx, 8.2, cz], [1.2, 3.2, 1.2]);
+      }
     }
   }
 
@@ -1380,6 +1541,157 @@ export class ComicFPS3DEngine {
     }
   }
 
+  _addCameraObstacleBox(minX, maxX, minZ, maxZ, maxY) {
+    if (!this._cameraObstacleBoxes) this._cameraObstacleBoxes = [];
+    this._cameraObstacleBoxes.push({ minX, maxX, minZ, maxZ, maxY });
+  }
+
+  _addSceneryCollider(x, z, hw, hd, maxY) {
+    if (!this.sceneryColliders) this.sceneryColliders = [];
+    this.sceneryColliders.push({ x, z, hw, hd, maxY });
+  }
+
+  _addRotatedSceneryCollider(x, z, hw, hd, rotY, maxY) {
+    const c = Math.abs(Math.cos(rotY));
+    const s = Math.abs(Math.sin(rotY));
+    this._addSceneryCollider(x, z, hw * c + hd * s, hw * s + hd * c, maxY);
+  }
+
+  _hasWallClearance(wx, wz, padRadius = 0.8) {
+    const gx = Math.floor(wx / CELL_SIZE);
+    const gz = Math.floor(wz / CELL_SIZE);
+    const rSq = padRadius * padRadius;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = gx + dx;
+        const nz = gz + dz;
+        const c = nx < 0 || nz < 0 || nx >= this.mapW || nz >= this.mapH ? 1 : this.map[nz][nx];
+        if (c > 0 && !this._isLowCoverCell(c)) {
+          const minX = nx * CELL_SIZE;
+          const maxX = minX + CELL_SIZE;
+          const minZ = nz * CELL_SIZE;
+          const maxZ = minZ + CELL_SIZE;
+          const cx = Math.max(minX, Math.min(wx, maxX));
+          const cz = Math.max(minZ, Math.min(wz, maxZ));
+          const ddx = wx - cx;
+          const ddz = wz - cz;
+          if (ddx * ddx + ddz * ddz < rSq) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  _buildMenuOrbitProfile() {
+    const worldW = this.mapW * CELL_SIZE;
+    const worldH = this.mapH * CELL_SIZE;
+    const cx = worldW * 0.5;
+    const cz = worldH * 0.5;
+    const rx = Math.max(8, worldW * 0.28);
+    const rz = Math.max(8, worldH * 0.28);
+    const isStreet = Boolean(this.level?.streetTheme);
+    const lookY = isStreet ? 3.2 : 1.8;
+    const baseFloor = isStreet ? 14.5 : 10.6;
+    const samples = 144;
+    const camPad = 2.8;
+    const boxes = this._cameraObstacleBoxes || [];
+    const raw = new Float64Array(samples);
+
+    for (let i = 0; i < samples; i++) {
+      const ang = (i / samples) * Math.PI * 2;
+      const x = cx + Math.cos(ang) * rx;
+      const z = cz + Math.sin(ang) * rz;
+      const dist = Math.hypot(cx - x, cz - z);
+      let req = baseFloor;
+
+      for (let bIdx = 0; bIdx < boxes.length; bIdx++) {
+        const b = boxes[bIdx];
+        if (x >= b.minX - camPad && x <= b.maxX + camPad && z >= b.minZ - camPad && z <= b.maxZ + camPad) {
+          if (b.maxY + 2.8 > req) req = b.maxY + 2.8;
+        }
+        // Check near-camera sight ray so nearby towers/spires never clip the frustum
+        for (const d of [1.6, 3.2, 4.8]) {
+          const t = d / (dist || 1);
+          if (t > 0.32) continue;
+          const sx = x + (cx - x) * t;
+          const sz = z + (cz - z) * t;
+          if (sx >= b.minX - 1.2 && sx <= b.maxX + 1.2 && sz >= b.minZ - 1.2 && sz <= b.maxZ + 1.2) {
+            const neededY = (b.maxY + 1.8 - lookY * t) / (1 - t);
+            req = Math.max(req, Math.min(b.maxY + 5.5, neededY));
+          }
+        }
+      }
+      raw[i] = req;
+    }
+
+    const plateau = 1;
+    const shoulderRadius = 22;
+    const rampSpan = shoulderRadius - plateau + 1;
+    const envelope = new Float64Array(samples);
+    envelope.fill(baseFloor);
+    for (let i = 0; i < samples; i++) {
+      const h = raw[i];
+      for (let d = -shoulderRadius; d <= shoulderRadius; d++) {
+        const j = (i + d + samples) % samples;
+        const ad = Math.abs(d);
+        const w = ad <= plateau ? 1 : 0.5 * (1 + Math.cos((Math.PI * (ad - plateau)) / rampSpan));
+        const candidate = baseFloor + (h - baseFloor) * w;
+        if (candidate > envelope[j]) envelope[j] = candidate;
+      }
+    }
+
+    let heights = envelope;
+    for (let pass = 0; pass < 2; pass++) {
+      const next = new Float64Array(samples);
+      for (let i = 0; i < samples; i++) {
+        const avg = (
+          heights[(i - 2 + samples) % samples] +
+          heights[(i - 1 + samples) % samples] +
+          heights[i] +
+          heights[(i + 1) % samples] +
+          heights[(i + 2) % samples]
+        ) / 5;
+        // Preserve peak plateau clearance so smoothing never drops below raw obstacle heights
+        const safeFloor = Math.max(
+          raw[(i - 1 + samples) % samples],
+          raw[i],
+          raw[(i + 1) % samples]
+        );
+        next[i] = Math.max(avg, safeFloor);
+      }
+      heights = next;
+    }
+
+    this._menuOrbitProfile = { cx, cz, rx, rz, lookY, samples, heights };
+    return this._menuOrbitProfile;
+  }
+
+  computeMenuOrbitCamera(angle, outPos, outTarget) {
+    const profile = this._menuOrbitProfile || this._buildMenuOrbitProfile();
+    const { cx, cz, rx, rz, lookY, samples, heights } = profile;
+    const tau = Math.PI * 2;
+    const a = ((angle % tau) + tau) % tau;
+    const fIdx = (a / tau) * samples;
+    const i0 = Math.floor(fIdx) % samples;
+    const i1 = (i0 + 1) % samples;
+    const frac = fIdx - Math.floor(fIdx);
+    let y = heights[i0] * (1 - frac) + heights[i1] * frac;
+    y += 0.45 * (1 + Math.sin(angle * 2.0));
+
+    const x = cx + Math.cos(angle) * rx;
+    const z = cz + Math.sin(angle) * rz;
+    const boxes = this._cameraObstacleBoxes || [];
+    for (let bIdx = 0; bIdx < boxes.length; bIdx++) {
+      const b = boxes[bIdx];
+      if (x >= b.minX - 2.2 && x <= b.maxX + 2.2 && z >= b.minZ - 2.2 && z <= b.maxZ + 2.2) {
+        if (b.maxY + 2.4 > y) y = b.maxY + 2.4;
+      }
+    }
+
+    outPos.set(x, y, z);
+    if (outTarget) outTarget.set(cx, lookY, cz);
+  }
+
   // 非规则精细街景家具布置：路口红绿灯、面向车道的路灯与消防栓、报刊亭/夜市摊、候车亭、露天咖啡伞、垃圾箱、邮筒、贩卖机、行道树
   _buildStreetBlockFurniture(lvl) {
     const H = this.mapH;
@@ -1388,9 +1700,15 @@ export class ComicFPS3DEngine {
     const swGrid = this.sidewalkGrid;
     const style = lvl.districtStyle || "default";
 
-    // 收集不可遮挡的关键点位（玩家出生点、敌人、道具、移动平台、激光线、老城中央喷泉），确保装饰物绝不碍路或穿模
+    // 收集不可遮挡的关键点位（玩家出生点、PvP四角出生点、敌人、道具、移动平台、老城中央喷泉），确保装饰物绝不碍路或穿模
     const reserved = [];
     if (lvl.playerStart) reserved.push([lvl.playerStart.x * CELL_SIZE, lvl.playerStart.z * CELL_SIZE, 3.6]);
+    for (const [sx, sz] of [[2.5, 2.5], [W - 2.5, H - 2.5], [W - 2.5, 2.5], [2.5, H - 2.5]]) {
+      reserved.push([sx * CELL_SIZE, sz * CELL_SIZE, 2.6]);
+    }
+    if (W >= 22) {
+      reserved.push([W * 0.5 * CELL_SIZE, 2.5 * CELL_SIZE, 2.6], [W * 0.5 * CELL_SIZE, (H - 2.5) * CELL_SIZE, 2.6]);
+    }
     for (const e of lvl.enemies || []) reserved.push([e.x * CELL_SIZE, e.z * CELL_SIZE, 2.6]);
     for (const p of lvl.props || []) reserved.push([p.x * CELL_SIZE, p.z * CELL_SIZE, 2.6]);
     for (const m of lvl.movers || []) {
@@ -1456,15 +1774,25 @@ export class ComicFPS3DEngine {
             if (!swGrid?.[c.gz]?.[c.gx] || this.map[c.gz]?.[c.gx] !== 0) continue;
             const wx = (c.gx + 0.5) * CELL_SIZE;
             const wz = (c.gz + 0.5) * CELL_SIZE;
-            if (canPlaceProp(wx, wz, 5.5)) {
-              this.streetScenery.addTrafficLight(wx, 0.16, wz, c.rotY);
+            if (this._hasWallClearance(wx, wz, 0.80) && canPlaceProp(wx, wz, 5.5)) {
+              this.streetScenery?.addTrafficLight(wx, 0.16, wz, c.rotY);
+              this._addSceneryCollider(wx, wz, 0.24, 0.24, 0.16 + 4.2);
             }
           }
         }
       }
     }
 
-    // 2. 遍历所有人行道格子，用确定性空间哈希生成「非规则、贴墙/贴路沿、分区风格鲜明」的精细街景
+    const clutterMeta = [
+      { hw: 0.68, hd: 0.46, h: 1.30, off: 1.08, pad: 0.70, lat: 0.65, endPad: 0.28 }, // 0 垃圾箱
+      { hw: 0.55, hd: 0.30, h: 1.30, off: 1.15, pad: 0.55, lat: 0.50, endPad: 0.22 }, // 1 邮筒+报箱
+      { hw: 0.58, hd: 0.40, h: 2.15, off: 1.18, pad: 0.62, lat: 0.45, endPad: 0.25 }, // 2 贩卖机
+      { hw: 0.80, hd: 0.28, h: 1.05, off: 0.88, pad: 0.65, lat: 1.15, endPad: 0.32 }, // 3 路障+锥桶
+      { hw: 0.54, hd: 0.54, h: 2.55, off: 1.12, pad: 0.72, lat: 0.45, endPad: 0.30 }, // 4 电话亭
+      { hw: 0.66, hd: 0.44, h: 1.25, off: 1.10, pad: 0.65, lat: 0.65, endPad: 0.25 }, // 5 货箱陶罐
+    ];
+
+    // 2. 遍历所有人行道格子，用确定性空间哈希生成「非规则、贴墙/贴路沿、分区风格鲜明」的精细街景与碰撞体
     for (let z = 1; z < H - 1; z++) {
       for (let x = 1; x < W - 1; x++) {
         if (this.map[z][x] !== 0 || !swGrid?.[z]?.[x]) continue;
@@ -1493,65 +1821,111 @@ export class ComicFPS3DEngine {
           const jitter = (((hash >> 5) % 5) - 2) * 0.25;
           const lx = cx + roadDir.nx * 1.48 + (roadDir.nz ? jitter : 0);
           const lz = cz + roadDir.nz * 1.48 + (roadDir.nx ? jitter : 0);
-          if (canPlaceProp(lx, lz, isLamp ? 6.2 : 5.0)) {
-            this.streetScenery.addStreetFixture(isLamp, lx, 0.16, lz, roadDir.rotY);
+          if (this._hasWallClearance(lx, lz, 0.60) && canPlaceProp(lx, lz, isLamp ? 6.2 : 5.0)) {
+            this.streetScenery?.addStreetFixture(isLamp, lx, 0.16, lz, roadDir.rotY);
+            this._addSceneryCollider(lx, lz, isLamp ? 0.22 : 0.24, isLamp ? 0.22 : 0.24, 0.16 + (isLamp ? 4.2 : 1.05));
             continue;
           }
         }
 
-        // 2b. 贴建筑外墙：各类精细街边生活道具（仅贴墙 1.28m，留出宽敞通行道）
+        // 2b. 贴建筑外墙：按各物件实际包络计算安全离墙距并验证L型墙角净距
         if (wallDir && (hash % 5 === 1 || ((style === "nightmarket" || style === "oldquarter") && hash % 5 === 2))) {
-          const px = cx + wallDir.bx * 1.24;
-          const pz = cz + wallDir.bz * 1.24;
           const yawJitter = ((((hash >> 4) % 7) - 3) / 3) * 0.08;
           const rot = wallDir.faceRot + yawJitter;
           const pick = (hash >> 7) % 12;
 
+          const tryPlaceAlongWall = (off, pad, spacing, rotAngle = rot, lat = 0, endPad = 0.28) => {
+            const px = cx + wallDir.bx * off;
+            const pz = cz + wallDir.bz * off;
+            if (!this._hasWallClearance(px, pz, pad)) return null;
+            if (lat > 0) {
+              const tx = Math.cos(rotAngle);
+              const tz = -Math.sin(rotAngle);
+              if (!this._hasWallClearance(px + tx * lat, pz + tz * lat, endPad) ||
+                  !this._hasWallClearance(px - tx * lat, pz - tz * lat, endPad)) {
+                return null;
+              }
+            }
+            return canPlaceProp(px, pz, spacing) ? { px, pz } : null;
+          };
+
+          const placeClutter = (variant, spacing, rotAngle = rot) => {
+            const meta = clutterMeta[variant];
+            const pos = tryPlaceAlongWall(meta.off, meta.pad, spacing, rotAngle, meta.lat, meta.endPad);
+            if (!pos) return;
+            this.streetScenery?.addStreetClutter(variant, pos.px, 0.16, pos.pz, rotAngle);
+            this._addRotatedSceneryCollider(pos.px, pos.pz, meta.hw, meta.hd, rotAngle, 0.16 + meta.h);
+          };
+
+          const placeNewsstand = (spacing, accent) => {
+            const pos = tryPlaceAlongWall(1.02, 0.82, spacing, rot, 1.12, 0.30);
+            if (!pos) return;
+            this.streetScenery?.addNewsstand(pos.px, 0.16, pos.pz, rot, accent);
+            this._addRotatedSceneryCollider(pos.px, pos.pz, 1.12, 0.56, rot, 0.16 + 2.65);
+          };
+
+          const placeBusShelter = (spacing, accent) => {
+            const pos = tryPlaceAlongWall(1.02, 0.82, spacing, rot, 1.25, 0.30);
+            if (!pos) return;
+            this.streetScenery?.addBusShelter(pos.px, 0.16, pos.pz, rot, accent);
+            this._addRotatedSceneryCollider(pos.px, pos.pz, 1.28, 0.58, rot, 0.16 + 2.75);
+          };
+
           if (style === "nightmarket") {
-            if (pick < 3 && canPlaceProp(px, pz, 5.2)) {
-              const accent = pick === 0 ? 0xff2ebd : pick === 1 ? 0x00c8e8 : 0xff7a00;
-              this.streetScenery.addNewsstand(px, 0.16, pz, rot, accent);
-            } else if (pick < 6 && canPlaceProp(px, pz, 4.2)) {
-              this.streetScenery.addStreetClutter(2, px, 0.16, pz, rot); // 霓虹自动贩卖机
-            } else if (pick < 8 && canPlaceProp(px, pz, 4.2)) {
-              this.streetScenery.addStreetClutter(0, px, 0.16, pz, rot); // 巷口垃圾箱
-            } else if (pick < 10 && canPlaceProp(px, pz, 4.4)) {
-              this.streetScenery.addStreetClutter(5, px, 0.16, pz, rot); // 夜市货箱堆
-            } else if (canPlaceProp(px, pz, 5.5)) {
-              this.streetScenery.addStreetClutter(3, px, 0.16, pz, rot + 0.18); // 路障锥桶
+            if (pick < 3) {
+              placeNewsstand(5.2, pick === 0 ? 0xff2ebd : pick === 1 ? 0x00c8e8 : 0xff7a00);
+            } else if (pick < 6) {
+              placeClutter(2, 4.2); // 霓虹自动贩卖机
+            } else if (pick < 8) {
+              placeClutter(0, 4.2); // 巷口垃圾箱
+            } else if (pick < 10) {
+              placeClutter(5, 4.4); // 夜市货箱堆
+            } else {
+              placeClutter(3, 5.5, wallDir.faceRot); // 路障锥桶
             }
           } else if (style === "oldquarter") {
-            if (pick < 3 && canPlaceProp(px, pz, 5.0)) {
-              const umb = pick === 0 ? 0xd93829 : pick === 1 ? 0x1b8ca6 : 0xe89923;
-              this.streetScenery.addCafeTable(px, 0.16, pz, rot, umb);
-            } else if (pick < 5 && canPlaceProp(px, pz, 5.6)) {
-              this.streetScenery.addNewsstand(px, 0.16, pz, rot, pick === 3 ? 0xc44e32 : 0x227c6c);
-            } else if (pick === 5 && canPlaceProp(px, pz, 6.4)) {
-              this.streetScenery.addBusShelter(px, 0.16, pz, rot, 0xffcf33);
-            } else if (pick < 8 && canPlaceProp(px, pz, 4.6)) {
-              this.streetScenery.addStreetClutter(pick === 6 ? 4 : 1, px, 0.16, pz, rot); // 电话亭/邮筒
-            } else if (pick < 10 && canPlaceProp(px, pz, 4.6)) {
-              this.streetScenery.addStreetClutter(5, px, 0.16, pz, rot); // 巴扎货箱陶罐
-            } else if (canPlaceProp(px, pz, 5.8)) {
-              this.streetScenery.addTree(px, 0.16, pz, 0.85 + (hash % 3) * 0.12, pick === 10 ? 0x2ea859 : 0x4ca64c, true);
+            if (pick < 3) {
+              const pos = tryPlaceAlongWall(0.50, 1.26, 5.0, rot);
+              if (pos) {
+                const umb = pick === 0 ? 0xd93829 : pick === 1 ? 0x1b8ca6 : 0xe89923;
+                this.streetScenery?.addCafeTable(pos.px, 0.16, pos.pz, rot, umb);
+                this._addSceneryCollider(pos.px, pos.pz, 0.62, 0.62, 0.16 + 1.15);
+              }
+            } else if (pick < 5) {
+              placeNewsstand(5.6, pick === 3 ? 0xc44e32 : 0x227c6c);
+            } else if (pick === 5) {
+              placeBusShelter(6.4, 0xffcf33);
+            } else if (pick < 8) {
+              placeClutter(pick === 6 ? 4 : 1, 4.6); // 电话亭/邮筒
+            } else if (pick < 10) {
+              placeClutter(5, 4.6); // 巴扎货箱陶罐
+            } else {
+              const pos = tryPlaceAlongWall(0.35, 1.42, 5.8, rot);
+              if (pos) {
+                const scale = 0.85 + (hash % 3) * 0.08;
+                this.streetScenery?.addTree(pos.px, 0.16, pos.pz, scale, pick === 10 ? 0x2ea859 : 0x4ca64c, true);
+                this._addSceneryCollider(pos.px, pos.pz, 0.48, 0.48, 0.16 + 3.2);
+              }
             }
           } else {
             // 唐人街 / 海港 / 大都会同样升级丰富微细节
-            if (pick < 2 && canPlaceProp(px, pz, 6.2)) {
-              this.streetScenery.addBusShelter(px, 0.16, pz, rot, style === "chinatown" ? 0xffae19 : 0x00e5ff);
-            } else if (pick < 4 && canPlaceProp(px, pz, 5.6)) {
-              this.streetScenery.addNewsstand(px, 0.16, pz, rot, style === "chinatown" ? 0xd92027 : 0xff2a44);
-            } else if (pick < 9 && canPlaceProp(px, pz, 4.8)) {
-              this.streetScenery.addStreetClutter(pick % 5, px, 0.16, pz, rot);
+            if (pick < 2) {
+              placeBusShelter(6.2, style === "chinatown" ? 0xffae19 : 0x00e5ff);
+            } else if (pick < 4) {
+              placeNewsstand(5.6, style === "chinatown" ? 0xd92027 : 0xff2a44);
+            } else if (pick < 9) {
+              placeClutter(pick % 5, 4.8);
             }
           }
         } else if (style === "oldquarter" && !wallDir && hash % 13 === 0) {
           // 老城宽阔广场人行道点缀错落的行道树与遮阳咖啡伞
-          if (canPlaceProp(cx, cz, 6.5)) {
+          if (this._hasWallClearance(cx, cz, 1.44) && canPlaceProp(cx, cz, 6.5)) {
             if ((hash >> 3) % 2 === 0) {
-              this.streetScenery.addTree(cx, 0.16, cz, 1.0 + (hash % 3) * 0.12, 0x359e58, true);
+              this.streetScenery?.addTree(cx, 0.16, cz, 0.96 + (hash % 3) * 0.06, 0x359e58, true);
+              this._addSceneryCollider(cx, cz, 0.48, 0.48, 0.16 + 3.2);
             } else {
-              this.streetScenery.addCafeTable(cx, 0.16, cz, (hash % 6) * 0.5, 0xd9482e);
+              this.streetScenery?.addCafeTable(cx, 0.16, cz, (hash % 6) * 0.5, 0xd9482e);
+              this._addSceneryCollider(cx, cz, 0.62, 0.62, 0.16 + 1.15);
             }
           }
         }
@@ -1559,25 +1933,31 @@ export class ComicFPS3DEngine {
     }
   }
 
-  // 确保实体永远生成在空地（格子值为 0），防止卡进建筑或木箱
-  _safeWorldPos(gridX, gridZ) {
+  // 确保实体永远生成在空地且远离静态碰撞体，防止卡进建筑或街景物件
+  _safeWorldPos(gridX, gridZ, padRadius = 0.68) {
+    const isFree = (wx, wz) => {
+      const mx = Math.floor(wx / CELL_SIZE);
+      const mz = Math.floor(wz / CELL_SIZE);
+      return mz >= 0 && mz < this.mapH && mx >= 0 && mx < this.mapW &&
+        this.map[mz][mx] === 0 && !this._isStaticBlocked(wx, wz, 0, padRadius);
+    };
+    const reqX = gridX * CELL_SIZE;
+    const reqZ = gridZ * CELL_SIZE;
+    if (isFree(reqX, reqZ)) return { x: reqX, z: reqZ };
     const gx = Math.floor(gridX);
     const gz = Math.floor(gridZ);
-    if (gz >= 0 && gz < this.mapH && gx >= 0 && gx < this.mapW && this.map[gz][gx] === 0) {
-      return { x: gridX * CELL_SIZE, z: gridZ * CELL_SIZE };
-    }
-    for (let r = 1; r <= 4; r++) {
+    for (let r = 0; r <= 4; r++) {
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
           const nx = gx + dx;
           const nz = gz + dz;
-          if (nz >= 0 && nz < this.mapH && nx >= 0 && nx < this.mapW && this.map[nz][nx] === 0) {
-            return { x: (nx + 0.5) * CELL_SIZE, z: (nz + 0.5) * CELL_SIZE };
-          }
+          const cx = (nx + 0.5) * CELL_SIZE;
+          const cz = (nz + 0.5) * CELL_SIZE;
+          if (isFree(cx, cz)) return { x: cx, z: cz };
         }
       }
     }
-    return { x: gridX * CELL_SIZE, z: gridZ * CELL_SIZE };
+    return { x: reqX, z: reqZ };
   }
 
   _spawnEnemy(spec, id) {
@@ -1712,12 +2092,147 @@ export class ComicFPS3DEngine {
     this.enemies.push(enemy);
   }
 
+  _isDynamicPickup(type) {
+    return type === "medkit" || type === "ammo";
+  }
+
+  _collectOpenPickupCells() {
+    const cells = [];
+    for (let z = 1; z < this.mapH - 1; z++) {
+      for (let x = 1; x < this.mapW - 1; x++) {
+        if (this.map[z]?.[x] === 0) cells.push([x, z]);
+      }
+    }
+    return cells;
+  }
+
+  _pickDynamicPickupSpot(players = [this.player], deterministicIdx = null) {
+    const cells = this._openPickupCells || this._collectOpenPickupCells();
+    const candidates = [];
+    const startX = (this.level?.playerStart?.x ?? 2.5) * CELL_SIZE;
+    const startZ = (this.level?.playerStart?.z ?? 2.5) * CELL_SIZE;
+
+    for (let i = 0; i < cells.length; i++) {
+      const [cx, cz] = cells[i];
+      const wx = (cx + 0.5) * CELL_SIZE;
+      const wz = (cz + 0.5) * CELL_SIZE;
+      if (this._isStaticBlocked(wx, wz, 0, 0.75)) continue;
+
+      let blocked = false;
+      for (let j = 0; j < this.props.length; j++) {
+        const pr = this.props[j];
+        if (!pr.active) continue;
+        const dx = pr.x - wx;
+        const dz = pr.z - wz;
+        if (dx * dx + dz * dz < (CELL_SIZE * 1.15) ** 2) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
+
+      if (deterministicIdx !== null) {
+        if ((wx - startX) ** 2 + (wz - startZ) ** 2 < (CELL_SIZE * 1.5) ** 2) continue;
+      } else {
+        let nearPlayer = false;
+        for (let j = 0; j < players.length; j++) {
+          const pl = players[j];
+          if (!pl || pl.hp <= 0) continue;
+          const dx = pl.pos.x - wx;
+          const dz = pl.pos.z - wz;
+          if (dx * dx + dz * dz < (CELL_SIZE * 1.5) ** 2) {
+            nearPlayer = true;
+            break;
+          }
+        }
+        if (nearPlayer) continue;
+      }
+
+      candidates.push({ x: wx, z: wz });
+    }
+    if (!candidates.length) return null;
+    if (deterministicIdx !== null) {
+      return candidates[(deterministicIdx * 17 + 7) % candidates.length];
+    }
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  _setPropPosition(prop, wx, wz) {
+    prop.x = wx;
+    prop.z = wz;
+    const gx = Math.floor(wx / CELL_SIZE);
+    const gz = Math.floor(wz / CELL_SIZE);
+    prop.baseElev = this.sidewalkGrid?.[gz]?.[gx] ? 0.16 : 0;
+    const baseY = prop.type === "barrel" ? 0.725 : prop.type === "medkit" ? 0.55 : prop.type === "ammo" ? 0.52 : 0.11;
+    if (prop.mesh) prop.mesh.position.set(wx, prop.baseElev + baseY, wz);
+  }
+
+  _deactivateDynamicPickup(prop) {
+    prop.active = false;
+    prop.life = 0;
+    prop.blinkPhase = 0;
+    prop.respawnTimer = PICKUP_RESPAWN_MIN + Math.random() * (PICKUP_RESPAWN_MAX - PICKUP_RESPAWN_MIN);
+    if (prop.mesh) {
+      prop.mesh.visible = true;
+      this.levelRoot.remove(prop.mesh);
+    }
+  }
+
+  _updateDynamicPickups(dt, players = [this.player]) {
+    for (const pr of this.props) {
+      if (!this._isDynamicPickup(pr.type)) continue;
+      if (pr.active) {
+        pr.life -= dt;
+        if (pr.life <= 0) {
+          this._deactivateDynamicPickup(pr);
+        }
+      } else {
+        if (pr.respawnTimer <= 0) {
+          pr.respawnTimer = PICKUP_RESPAWN_MIN + Math.random() * (PICKUP_RESPAWN_MAX - PICKUP_RESPAWN_MIN);
+        }
+        pr.respawnTimer -= dt;
+        if (pr.respawnTimer <= 0) {
+          const spot = this._pickDynamicPickupSpot(players);
+          if (spot) {
+            this._setPropPosition(pr, spot.x, spot.z);
+            pr.active = true;
+            pr.life = PICKUP_LIFETIME;
+            pr.respawnTimer = 0;
+            pr.blinkPhase = 0;
+            if (pr.mesh) {
+              pr.mesh.visible = true;
+              this.levelRoot.add(pr.mesh);
+            }
+            this._spawnParticles(
+              new THREE.Vector3(spot.x, (pr.baseElev || 0) + 0.6, spot.z),
+              pr.type === "medkit" ? 0x38e54d : 0xffe01b,
+              5
+            );
+          } else {
+            pr.respawnTimer = 1.5;
+          }
+        }
+      }
+    }
+  }
+
   _spawnProp(spec, id) {
     const pos = this._safeWorldPos(spec.x, spec.z);
     const wx = pos.x;
     const wz = pos.z;
     const baseElev = this.sidewalkGrid?.[Math.floor(wz / CELL_SIZE)]?.[Math.floor(wx / CELL_SIZE)] ? 0.16 : 0;
-    const prop = { id, type: spec.type, active: true, x: wx, z: wz, baseElev, mesh: null };
+    const prop = {
+      id,
+      type: spec.type,
+      active: true,
+      x: wx,
+      z: wz,
+      baseElev,
+      mesh: null,
+      life: this._isDynamicPickup(spec.type) ? PICKUP_LIFETIME : -1,
+      respawnTimer: 0,
+      blinkPhase: 0,
+    };
 
     if (spec.type === "barrel") {
       const geo = new THREE.CylinderGeometry(0.55, 0.55, 1.45, 14);
@@ -1814,19 +2329,36 @@ export class ComicFPS3DEngine {
   }
 
   _isStaticBlocked(wx, wz, playerY = 0, radius = 0) {
+    const isCellBlocked = (x, z) => {
+      const mx = Math.floor(x / CELL_SIZE);
+      const mz = Math.floor(z / CELL_SIZE);
+      if (mx < 0 || mz < 0 || mx >= this.mapW || mz >= this.mapH) return true;
+      const c = this.map[mz][mx];
+      if (c === 0) return false;
+      if (this._isLowCoverCell(c)) {
+        const coverTop = 1.65 + (this.sidewalkGrid?.[mz]?.[mx] ? 0.16 : 0);
+        return playerY < coverTop - 0.18;
+      }
+      return true;
+    };
     if (radius <= 0) {
-      const c = this._cellAt(wx, wz);
-      return c !== 0 && !(this._isLowCoverCell(c) && playerY >= 1.45);
+      if (isCellBlocked(wx, wz)) return true;
+    } else if (
+      isCellBlocked(wx - radius, wz - radius) ||
+      isCellBlocked(wx + radius, wz - radius) ||
+      isCellBlocked(wx - radius, wz + radius) ||
+      isCellBlocked(wx + radius, wz + radius)
+    ) {
+      return true;
     }
-    const offsets = [
-      [-radius, -radius],
-      [radius, -radius],
-      [-radius, radius],
-      [radius, radius],
-    ];
-    for (const [ox, oz] of offsets) {
-      const c = this._cellAt(wx + ox, wz + oz);
-      if (c !== 0 && !(this._isLowCoverCell(c) && playerY >= 1.45)) return true;
+    const cols = this.sceneryColliders;
+    if (cols) {
+      for (let i = 0; i < cols.length; i++) {
+        const col = cols[i];
+        if (playerY < col.maxY - 0.12 && Math.abs(wx - col.x) < col.hw + radius && Math.abs(wz - col.z) < col.hd + radius) {
+          return true;
+        }
+      }
     }
     return false;
   }
@@ -1847,6 +2379,15 @@ export class ComicFPS3DEngine {
     const mz = Math.floor(wz / CELL_SIZE);
     const sw = this.sidewalkGrid?.[mz]?.[mx] ? 0.16 : 0;
     let h = this._isLowCoverCell(this._cellAt(wx, wz)) ? 1.65 + sw : sw;
+    const cols = this.sceneryColliders;
+    if (cols) {
+      for (let i = 0; i < cols.length; i++) {
+        const col = cols[i];
+        if (col.maxY <= 3.0 && Math.abs(wx - col.x) < col.hw + 0.35 && Math.abs(wz - col.z) < col.hd + 0.35) {
+          if (col.maxY > h) h = col.maxY;
+        }
+      }
+    }
     for (const m of this.movers) {
       if (m.rideable && Math.abs(wx - m.x) < m.w / 2 + 0.35 && Math.abs(wz - m.z) < m.d / 2 + 0.35) {
         if (m.h > h) h = m.h;
@@ -1867,7 +2408,10 @@ export class ComicFPS3DEngine {
       const z = fromPos.z + dz * t;
       const c = this._cellAt(x, z);
       if (c > 0 && !this._isLowCoverCell(c)) return false;
-      if (this._isLowCoverCell(c) && y < 1.65) return false;
+      if (this._isLowCoverCell(c)) {
+        const coverTop = 1.65 + (this.sidewalkGrid?.[Math.floor(z / CELL_SIZE)]?.[Math.floor(x / CELL_SIZE)] ? 0.16 : 0);
+        if (y < coverTop) return false;
+      }
       for (const m of this.movers) {
         if (Math.abs(x - m.x) < m.w / 2 && Math.abs(z - m.z) < m.d / 2 && y < m.h) {
           return false;
@@ -2282,6 +2826,7 @@ export class ComicFPS3DEngine {
     this._updateCombo(dt);
     this._updatePlayer(dt);
     if (this.mouseDown && this.weapons.current.auto) this.fireWeapon();
+    this._updateDynamicPickups(dt, [this.player]);
     this._updateProps(dt);
     this._updateEnemies(dt);
     this._updateProjectiles(dt);
@@ -2931,6 +3476,26 @@ export class ComicFPS3DEngine {
       p.pos.z = nextZ;
     }
 
+    // 软推离存活敌人躯干，防止第一人称视角穿入敌人空心模型内部
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      if (!e.alive || Math.abs(p.pos.y - e.root.position.y) > 1.85) continue;
+      const dx = p.pos.x - e.root.position.x;
+      const dz = p.pos.z - e.root.position.z;
+      const minDist = 0.92 * Math.max(1, e.scale * 0.72);
+      const distSq = dx * dx + dz * dz;
+      if (distSq < minDist * minDist) {
+        const dist = Math.sqrt(distSq);
+        const nx = dist > 1e-4 ? dx / dist : 1;
+        const nz = dist > 1e-4 ? dz / dist : 0;
+        const push = (minDist - dist) * Math.min(1, dt * 18 + 0.35);
+        const pushX = p.pos.x + nx * push;
+        const pushZ = p.pos.z + nz * push;
+        if (!this._isBlocked(pushX, p.pos.z, p.pos.y, radius)) p.pos.x = pushX;
+        if (!this._isBlocked(p.pos.x, pushZ, p.pos.y, radius)) p.pos.z = pushZ;
+      }
+    }
+
     // 垂直重力与跳跃
     p.velY -= 24.0 * dt;
     p.pos.y += p.velY * dt;
@@ -2984,20 +3549,28 @@ export class ComicFPS3DEngine {
     );
   }
 
-  _updateProps(dt, applyEffects = true) {
+  _updateProps(dt, applyEffects = true, animateBlink = true) {
     const p = this.player;
     const t = performance.now() * 0.003;
     for (const pr of this.props) {
       if (!pr.active) continue;
-      if (pr.type === "medkit" || pr.type === "ammo") {
+      if (this._isDynamicPickup(pr.type)) {
         pr.mesh.rotation.y += dt * 2.2;
         pr.mesh.position.y = (pr.baseElev || 0) + 0.55 + Math.sin(t + pr.id) * 0.12;
+        if (animateBlink && pr.life >= 0 && pr.life <= PICKUP_WARN_WINDOW) {
+          const u = 1 - Math.max(0, pr.life) / PICKUP_WARN_WINDOW;
+          const freq = 2.2 + 12.5 * u * u; // 从 2.2Hz 随剩余时间减少平滑加速至 14.7Hz
+          pr.blinkPhase = (pr.blinkPhase || 0) + dt * freq * Math.PI * 2;
+          pr.mesh.visible = Math.sin(pr.blinkPhase) >= -0.15;
+        } else {
+          pr.mesh.visible = true;
+          pr.blinkPhase = 0;
+        }
         if (!applyEffects) continue;
         const dist = Math.hypot(pr.x - p.pos.x, pr.z - p.pos.z);
-        if (dist < 1.65 && Math.abs(p.pos.y) < 1.5) {
+        if (dist < 1.65 && Math.abs(p.pos.y - (pr.baseElev || 0)) < 1.5) {
           if (pr.type === "medkit" && p.hp < p.maxHp) {
-            pr.active = false;
-            this.levelRoot.remove(pr.mesh);
+            this._deactivateDynamicPickup(pr);
             const prevHp = p.hp;
             p.hp = Math.min(p.maxHp, p.hp + 35);
             const gained = Math.max(1, Math.round(p.hp - prevHp));
@@ -3005,8 +3578,7 @@ export class ComicFPS3DEngine {
             this.callbacks.onPickup?.(p, { kind: "medkit", amount: gained });
             this.spawnPopup(new THREE.Vector3(pr.x, 1.4, pr.z), `+${gained} HP!`, "#38e54d", 1.15);
           } else if (pr.type === "ammo") {
-            pr.active = false;
-            this.levelRoot.remove(pr.mesh);
+            this._deactivateDynamicPickup(pr);
             const gains = this.weapons.addAmmo();
             this.audio.playPickup();
             this.callbacks.onPickup?.(p, { kind: "ammo", gains });
@@ -3170,6 +3742,34 @@ export class ComicFPS3DEngine {
         }
       }
     }
+
+    // 存活敌人之间保持柔和水平间距，避免模型重叠穿模
+    for (let i = 0; i < this.enemies.length; i++) {
+      const a = this.enemies[i];
+      if (!a.alive) continue;
+      for (let j = i + 1; j < this.enemies.length; j++) {
+        const b = this.enemies[j];
+        if (!b.alive) continue;
+        const dx = a.root.position.x - b.root.position.x;
+        const dz = a.root.position.z - b.root.position.z;
+        const minDist = 1.15 * Math.max(a.scale, b.scale);
+        const distSq = dx * dx + dz * dz;
+        if (distSq < minDist * minDist) {
+          const dist = Math.sqrt(distSq);
+          const nx = dist > 1e-4 ? dx / dist : 1;
+          const nz = dist > 1e-4 ? dz / dist : 0;
+          const halfPush = (minDist - dist) * 0.5 * Math.min(1, dt * 12);
+          const ax = a.root.position.x + nx * halfPush;
+          const az = a.root.position.z + nz * halfPush;
+          const bx = b.root.position.x - nx * halfPush;
+          const bz = b.root.position.z - nz * halfPush;
+          if (!this._isBlocked(ax, a.root.position.z, 0, 0.65)) a.root.position.x = ax;
+          if (!this._isBlocked(a.root.position.x, az, 0, 0.65)) a.root.position.z = az;
+          if (!this._isBlocked(bx, b.root.position.z, 0, 0.65)) b.root.position.x = bx;
+          if (!this._isBlocked(b.root.position.x, bz, 0, 0.65)) b.root.position.z = bz;
+        }
+      }
+    }
   }
 
   _fireEnemyProjectile(enemy, from, target) {
@@ -3315,6 +3915,24 @@ export class ComicFPS3DEngine {
       this.nextShadowUpdate = now + SHADOW_INTERVAL_MS;
     }
     this.renderer.render(this.scene, this.camera);
+    const showWeapons = Boolean(this.weapons?.root?.visible || this.weapons?.punchFist?.visible);
+    if (this.weaponScene && showWeapons) {
+      let projDirty = false;
+      if (this.weaponCamera.fov !== this.camera.fov) {
+        this.weaponCamera.fov = this.camera.fov;
+        projDirty = true;
+      }
+      if (this.weaponCamera.aspect !== this.camera.aspect) {
+        this.weaponCamera.aspect = this.camera.aspect;
+        projDirty = true;
+      }
+      if (projDirty) this.weaponCamera.updateProjectionMatrix();
+      const prevAutoClear = this.renderer.autoClear;
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.weaponScene, this.weaponCamera);
+      this.renderer.autoClear = prevAutoClear;
+    }
     this._render2DOverlay();
   }
 
@@ -3508,6 +4126,7 @@ export class ComicFPS3DEngine {
 
     for (const pr of this.props) {
       if (!pr.active) continue;
+      if (pr.mesh && !pr.mesh.visible) continue;
       miniCtx.fillStyle =
         pr.type === "barrel" ? "#ff7a00" :
         pr.type === "medkit" ? "#38e54d" :

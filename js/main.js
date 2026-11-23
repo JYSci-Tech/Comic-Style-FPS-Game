@@ -2,6 +2,7 @@ import { ComicAudio } from "./audio.js";
 import { ComicAssets } from "./textures.js";
 import { CELL_SIZE, COMIC_LEVELS } from "./levels.js";
 import { ComicFPS3DEngine } from "./engine.js";
+import { KeybindManager, KEYBIND_ACTIONS, formatKeyCode } from "./keybinds.js";
 import { LanClient } from "./lan.js";
 import { KILL_LIMIT } from "./lan-rules.js";
 import { getWeaponArtSVG } from "./weapon-art.js";
@@ -73,6 +74,10 @@ const btnContinue = document.getElementById("btn-continue");
 const btnStart = document.getElementById("btn-start");
 const btnGuide = document.getElementById("btn-guide");
 const btnGuideClose = document.getElementById("btn-guide-close");
+const btnKeybinds = document.getElementById("btn-keybinds");
+const btnKeybindsPause = document.getElementById("btn-keybinds-pause");
+const btnKeybindsReset = document.getElementById("btn-keybinds-reset");
+const btnKeybindsClose = document.getElementById("btn-keybinds-close");
 const btnToggleSfx = document.getElementById("btn-toggle-sfx");
 const btnResume = document.getElementById("btn-resume");
 const btnRetryPause = document.getElementById("btn-retry-pause");
@@ -83,9 +88,19 @@ const btnHomeInter = document.getElementById("btn-home-inter");
 const btnRetryLevel = document.getElementById("btn-retry-level");
 const btnRestart = document.getElementById("btn-restart");
 const btnHomeEnd = document.getElementById("btn-home-end");
+const keybindsScreen = document.getElementById("keybinds-screen");
+const keybindsStatus = document.getElementById("keybinds-status");
+const keybindsList = document.getElementById("keybinds-list");
+const hudControlsStrip = document.getElementById("hud-controls-strip");
+const aaaControlsHint = document.getElementById("aaa-controls-hint");
+const guideControlsList = document.getElementById("guide-controls-list");
 
 const audio = new ComicAudio();
 const assets = new ComicAssets();
+const keybinds = new KeybindManager();
+const pressedCodes = new Set();
+let listeningAction = null;
+let keybindsReturnTarget = "menu";
 
 let state = "menu"; // menu | playing | paused | intermission | weaponselect | gameover | victory | lan
 let hitmarkerTimer = 0;
@@ -106,6 +121,7 @@ let pendingUnlockIdx = null;
 let pendingTargetLevel = 0;
 let pendingKeepStats = true;
 
+const WEAPON_SLOT_NAMES = ["MAGNUM", "SHOTGUN", "RAYGUN", "SNIPER"];
 const WEAPON_SLOT_LABELS = ["1. MAGNUM", "2. SHOTGUN", "3. RAYGUN", "4. SNIPER"];
 const WEAPON_DRAFT_META = {
   0: {
@@ -414,11 +430,146 @@ function unlockPointer() {
   }
 }
 
+function syncMovementKeys() {
+  const arrowUpUsed = keybinds.isBound("ArrowUp");
+  const arrowDownUsed = keybinds.isBound("ArrowDown");
+  const arrowLeftUsed = keybinds.isBound("ArrowLeft");
+  const arrowRightUsed = keybinds.isBound("ArrowRight");
+
+  engine.keys.KeyW = pressedCodes.has(keybinds.get("moveForward")) || (!arrowUpUsed && pressedCodes.has("ArrowUp"));
+  engine.keys.KeyS = pressedCodes.has(keybinds.get("moveBackward")) || (!arrowDownUsed && pressedCodes.has("ArrowDown"));
+  engine.keys.KeyA = pressedCodes.has(keybinds.get("moveLeft"));
+  engine.keys.KeyD = pressedCodes.has(keybinds.get("moveRight"));
+  engine.keys.ArrowUp = !arrowUpUsed && pressedCodes.has("ArrowUp");
+  engine.keys.ArrowDown = !arrowDownUsed && pressedCodes.has("ArrowDown");
+  engine.keys.ArrowLeft = !arrowLeftUsed && pressedCodes.has("ArrowLeft");
+  engine.keys.ArrowRight = !arrowRightUsed && pressedCodes.has("ArrowRight");
+}
+
+function clearPressedInputs() {
+  pressedCodes.clear();
+  engine.keys = {};
+}
+
+function refreshKeybindHints() {
+  const kFwd = keybinds.getLabel("moveForward");
+  const kBack = keybinds.getLabel("moveBackward");
+  const kLeft = keybinds.getLabel("moveLeft");
+  const kRight = keybinds.getLabel("moveRight");
+  const moveCombo = kFwd + kLeft + kBack + kRight;
+  const kJump = keybinds.getLabel("jump");
+  const kDash = keybinds.getLabel("dash");
+  const kSlide = keybinds.getLabel("slide");
+  const kReload = keybinds.getLabel("reload");
+  const kGrenade = keybinds.getLabel("grenade");
+  const kMelee = keybinds.getLabel("melee");
+  const w1 = keybinds.getLabel("weapon1");
+  const w2 = keybinds.getLabel("weapon2");
+  const w3 = keybinds.getLabel("weapon3");
+  const w4 = keybinds.getLabel("weapon4");
+
+  for (let i = 0; i < 4; i++) {
+    const label = keybinds.getLabel(`weapon${i + 1}`);
+    WEAPON_SLOT_LABELS[i] = `${label}. ${WEAPON_SLOT_NAMES[i]}`;
+  }
+
+  if (hudControlsStrip) {
+    hudControlsStrip.textContent =
+      `${moveCombo} 移动 · ${kJump} 跳跃 · ${kDash} 冲刺 · ${kSlide} 滑铲 · 左键射击 · 右键机瞄 · 按住 ${kGrenade} 瞄准松开扔手雷 · ${kMelee} 重拳 · ${kReload} 换弹 · ${w1}/${w2}/${w3}/${w4} 切枪 · ESC 暂停`;
+  }
+  if (aaaControlsHint) {
+    aaaControlsHint.textContent =
+      `${moveCombo} 移动 · ${kJump} 跳跃 · ${kSlide} 滑铲 · ${kDash} 冲刺 · 左键开火 / 右键机瞄 · 按住 ${kGrenade} 瞄准扔手雷 · ${kMelee} 重拳`;
+  }
+  if (guideControlsList) {
+    guideControlsList.innerHTML = `
+      <li><b>${kFwd} ${kLeft} ${kBack} ${kRight} / ${kJump}</b>：移动、跳跃翻越木箱与移动平台</li>
+      <li><b>鼠标左键 / 右键</b>：开火 / 精确机瞄缩放 (ADS)</li>
+      <li><b>${kDash}</b>：漫画速度线闪避冲刺（带无敌帧，可穿激光）</li>
+      <li><b>${kSlide}（奔跑中）</b>：高速战术滑铲（低视角滑行 + 可接跳跃）</li>
+      <li><b>按住 ${kGrenade} 键</b>：移动鼠标预瞄抛物线与落点，松开投掷手雷 · 右键取消（首局 1 颗，每晋级 +2 颗）</li>
+      <li><b>${kMelee} 键</b>：漫画重拳近战击退 (POW!)</li>
+      <li><b>${w1} ${w2} ${w3} ${w4} 或滚轮 / ${kReload}</b>：切换 3D 武器与换弹</li>
+    `;
+  }
+}
+
+function renderKeybindsList() {
+  if (!keybindsList) return;
+  const groups = [
+    { id: "move", title: "移动与身法 · MOVEMENT" },
+    { id: "combat", title: "战斗与武器 · COMBAT" },
+  ];
+  const nodes = [];
+  for (const grp of groups) {
+    const header = document.createElement("div");
+    header.className = "kb-group-title";
+    header.textContent = grp.title;
+    nodes.push(header);
+
+    for (const action of KEYBIND_ACTIONS) {
+      if (action.group !== grp.id) continue;
+      const row = document.createElement("div");
+      row.className = "kb-row";
+
+      const labelWrap = document.createElement("div");
+      labelWrap.className = "kb-label";
+      const strong = document.createElement("strong");
+      strong.textContent = action.label;
+      const span = document.createElement("span");
+      span.textContent = action.en;
+      labelWrap.append(strong, span);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const isListening = listeningAction === action.id;
+      btn.className = "kb-key-btn" + (isListening ? " listening" : "");
+      btn.textContent = isListening ? "请按键..." : keybinds.getLabel(action.id);
+      btn.addEventListener("click", () => {
+        audio.init();
+        listeningAction = listeningAction === action.id ? null : action.id;
+        if (keybindsStatus) {
+          keybindsStatus.textContent = listeningAction
+            ? `正在设置「${action.label}」—— 请按下新的键盘按键（ESC 取消）`
+            : "点击任意按键框后按下新键即可绑定 · ESC 取消";
+        }
+        renderKeybindsList();
+      });
+
+      row.append(labelWrap, btn);
+      nodes.push(row);
+    }
+  }
+  keybindsList.replaceChildren(...nodes);
+}
+
+function openKeybinds(from = "menu") {
+  keybindsReturnTarget = from;
+  listeningAction = null;
+  clearPressedInputs();
+  if (keybindsStatus) {
+    keybindsStatus.textContent = "点击任意按键框后按下新键即可绑定 · 冲突键位自动对调 · ESC 取消";
+  }
+  renderKeybindsList();
+  pauseScreen.classList.add("hidden");
+  keybindsScreen.classList.remove("hidden");
+}
+
+function closeKeybinds() {
+  listeningAction = null;
+  keybindsScreen.classList.add("hidden");
+  if (keybindsReturnTarget === "pause" && state === "paused") {
+    pauseScreen.classList.remove("hidden");
+  }
+}
+
 function hideAllScreens() {
   clearResultDelay();
+  listeningAction = null;
   gameShell.classList.remove("defeat-monochrome");
   startScreen.classList.add("hidden");
   guideScreen.classList.add("hidden");
+  keybindsScreen?.classList.add("hidden");
   pauseScreen.classList.add("hidden");
   interScreen.classList.add("hidden");
   weaponSelectScreen.classList.add("hidden");
@@ -478,7 +629,7 @@ function pauseGame() {
   engine.setAds(false);
   engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
-  engine.keys = {};
+  clearPressedInputs();
   btnRetryPause.textContent = `重开本关 (${engine.level.issue})`;
   pauseScreen.classList.remove("hidden");
 }
@@ -491,7 +642,7 @@ function goHome() {
   engine.mouseDown = false;
   engine.setAds(false);
   engine.cancelGrenadeAim();
-  engine.keys = {};
+  clearPressedInputs();
   state = "menu";
   const saved = readSavedCheckpoint();
   engine.loadLevel(saved?.levelIdx ?? 0, false);
@@ -505,7 +656,7 @@ function showIntermission() {
   engine.setAds(false);
   engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
-  engine.keys = {};
+  clearPressedInputs();
   const lvl = engine.level;
   gameShell.classList.remove("defeat-monochrome");
   document.getElementById("inter-banner").textContent = `★ ${lvl.issue} 通关成功 · STAGE CLEARED! ★`;
@@ -532,7 +683,7 @@ function openWeaponSelect(targetIdx, keepStats = true) {
   engine.setAds(false);
   engine.cancelGrenadeAim();
   sniperScope.classList.add("hidden");
-  engine.keys = {};
+  clearPressedInputs();
   hud.classList.add("hidden");
 
   const nextLvl = COMIC_LEVELS[targetIdx];
@@ -632,7 +783,7 @@ function showEndScreen(victory) {
   engine.mouseDown = false;
   engine.setAds(false);
   engine.cancelGrenadeAim();
-  engine.keys = {};
+  clearPressedInputs();
   hud.classList.add("hidden");
   sniperScope.classList.add("hidden");
   gameShell.classList.toggle("defeat-monochrome", !victory);
@@ -663,6 +814,18 @@ btnContinue.addEventListener("click", continueSavedGame);
 btnStart.addEventListener("click", startNewGame);
 btnGuide.addEventListener("click", () => guideScreen.classList.remove("hidden"));
 btnGuideClose.addEventListener("click", () => guideScreen.classList.add("hidden"));
+btnKeybinds?.addEventListener("click", () => openKeybinds("menu"));
+btnKeybindsPause?.addEventListener("click", () => openKeybinds("pause"));
+btnKeybindsReset?.addEventListener("click", () => {
+  audio.init();
+  audio.playReload();
+  listeningAction = null;
+  keybinds.resetDefaults();
+  if (keybindsStatus) keybindsStatus.textContent = "已恢复全部默认键位！";
+  renderKeybindsList();
+  refreshKeybindHints();
+});
+btnKeybindsClose?.addEventListener("click", closeKeybinds);
 btnResume.addEventListener("click", () => {
   audio.init();
   resumeGame();
@@ -720,9 +883,51 @@ document.addEventListener("pointerlockchange", () => {
 document.addEventListener("pointerlockerror", () => lan.pointerError());
 window.addEventListener("blur", () => {
   engine.cancelGrenadeAim();
-  engine.keys = {};
+  clearPressedInputs();
   if (state === "lan" && lan.match) lan.releaseInput();
 });
+
+// 键位设置界面全局捕获按键监听
+window.addEventListener("keydown", (e) => {
+  if (!keybindsScreen || keybindsScreen.classList.contains("hidden")) return;
+  if (listeningAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.code === "Escape") {
+      listeningAction = null;
+      if (keybindsStatus) keybindsStatus.textContent = "已取消修改，点击任意按键框可重新绑定 · ESC 取消";
+      renderKeybindsList();
+      return;
+    }
+    const targetAction = KEYBIND_ACTIONS.find((a) => a.id === listeningAction);
+    const res = keybinds.set(listeningAction, e.code);
+    listeningAction = null;
+    if (res.ok) {
+      audio.init();
+      audio.playReload();
+      if (res.swappedWith) {
+        const swappedAction = KEYBIND_ACTIONS.find((a) => a.id === res.swappedWith);
+        if (keybindsStatus) {
+          keybindsStatus.textContent = `已将「${targetAction?.label}」绑定为 ${formatKeyCode(e.code)}（并与「${swappedAction?.label}」自动对调）`;
+        }
+      } else if (keybindsStatus) {
+        keybindsStatus.textContent = `已将「${targetAction?.label}」绑定为 ${formatKeyCode(e.code)}`;
+      }
+      refreshKeybindHints();
+    } else if (keybindsStatus) {
+      keybindsStatus.textContent = "该按键不可绑定（ESC 为系统保留键），请更换其他按键";
+    }
+    renderKeybindsList();
+    return;
+  }
+  if (e.code === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeKeybinds();
+  }
+}, true);
+
+refreshKeybindHints();
 
 glCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -784,55 +989,87 @@ window.addEventListener("wheel", (e) => {
 });
 
 window.addEventListener("keydown", (e) => {
+  if (keybindsScreen && !keybindsScreen.classList.contains("hidden")) return;
   if (state !== "playing" && !(state === "lan" && lan.canControl)) return;
-  engine.keys[e.code] = true;
+  if (e.code === "Space" || e.code === "Tab" || e.code.startsWith("Arrow")) e.preventDefault();
+
+  const prevW = engine.keys.KeyW;
+  const prevS = engine.keys.KeyS;
+  const prevA = engine.keys.KeyA;
+  const prevD = engine.keys.KeyD;
+  const prevAL = engine.keys.ArrowLeft;
+  const prevAR = engine.keys.ArrowRight;
+
+  pressedCodes.add(e.code);
+  syncMovementKeys();
+
+  const moveChanged = prevW !== engine.keys.KeyW || prevS !== engine.keys.KeyS
+    || prevA !== engine.keys.KeyA || prevD !== engine.keys.KeyD
+    || prevAL !== engine.keys.ArrowLeft || prevAR !== engine.keys.ArrowRight;
+  const action = keybinds.getActionForCode(e.code);
+
   if (state === "lan") {
-    if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
-    if (e.repeat) return;
-    if (/^Digit[1-4]$/.test(e.code)) {
+    if (e.repeat) {
+      if (moveChanged) lan.sendInput();
+      return;
+    }
+    if (action === "weapon1" || action === "weapon2" || action === "weapon3" || action === "weapon4") {
       engine.cancelGrenadeAim();
-      lan.weapon = Number(e.code.at(-1)) - 1;
+      lan.weapon = Number(action.slice(-1)) - 1;
       lan.sendInput();
-    } else if (e.code === "KeyR") lan.action("reload");
-    else if (e.code === "ShiftLeft" || e.code === "ShiftRight") lan.action("dash");
-    else if (e.code === "KeyC") lan.action("slide");
-    else if (e.code === "Space") lan.action("jump");
-    else if (e.code === "KeyG" || e.code === "KeyQ") {
+    } else if (action === "reload") lan.action("reload");
+    else if (action === "dash") lan.action("dash");
+    else if (action === "slide") lan.action("slide");
+    else if (action === "jump") lan.action("jump");
+    else if (action === "grenade") {
       if (!engine.grenadeAiming && engine.startGrenadeAim(e.code)) {
         lan.sendInput();
       }
-    } else if (e.code === "KeyE" || e.code === "KeyV") lan.action("melee");
-    else if (e.code === "KeyM") {
+    } else if (action === "melee") lan.action("melee");
+    else if (action === "toggleMute") {
       btnToggleSfx.textContent = engine.audio.toggle() ? "音效: 开启" : "音效: 关闭";
-    } else lan.sendInput();
+    } else if (moveChanged) {
+      lan.sendInput();
+    }
     return;
   }
 
-  if (e.code === "Digit1") { engine.cancelGrenadeAim(); engine.weapons.select(0); }
-  else if (e.code === "Digit2") { engine.cancelGrenadeAim(); engine.weapons.select(1); }
-  else if (e.code === "Digit3") { engine.cancelGrenadeAim(); engine.weapons.select(2); }
-  else if (e.code === "Digit4") { engine.cancelGrenadeAim(); engine.weapons.select(3); }
-  else if (e.code === "KeyR") engine.weapons.startReload();
-  else if (e.code === "ShiftLeft" || e.code === "ShiftRight") engine.triggerDash();
-  else if (e.code === "KeyC") engine.triggerSlide();
-  else if (e.code === "Space") {
-    e.preventDefault();
-    engine.triggerJump();
-  } else if (e.code === "KeyG" || e.code === "KeyQ") {
+  if (action === "weapon1") { engine.cancelGrenadeAim(); engine.weapons.select(0); }
+  else if (action === "weapon2") { engine.cancelGrenadeAim(); engine.weapons.select(1); }
+  else if (action === "weapon3") { engine.cancelGrenadeAim(); engine.weapons.select(2); }
+  else if (action === "weapon4") { engine.cancelGrenadeAim(); engine.weapons.select(3); }
+  else if (action === "reload") engine.weapons.startReload();
+  else if (action === "dash") engine.triggerDash();
+  else if (action === "slide") engine.triggerSlide();
+  else if (action === "jump") engine.triggerJump();
+  else if (action === "grenade") {
     if (!e.repeat && !engine.grenadeAiming) {
       engine.startGrenadeAim(e.code);
     }
-  } else if (e.code === "KeyE" || e.code === "KeyV") {
+  } else if (action === "melee") {
     engine.triggerMeleePunch();
-  } else if (e.code === "KeyM") {
+  } else if (action === "toggleMute") {
     const on = audio.toggle();
     btnToggleSfx.textContent = on ? "音效: 开启" : "音效: 关闭";
   }
 });
 
 window.addEventListener("keyup", (e) => {
-  if (engine.grenadeAiming && (e.code === engine.grenadeAimKey || e.code === "KeyG" || e.code === "KeyQ")) {
-    engine.keys[e.code] = false;
+  const wasDown = pressedCodes.delete(e.code);
+  const prevW = engine.keys.KeyW;
+  const prevS = engine.keys.KeyS;
+  const prevA = engine.keys.KeyA;
+  const prevD = engine.keys.KeyD;
+  const prevAL = engine.keys.ArrowLeft;
+  const prevAR = engine.keys.ArrowRight;
+
+  syncMovementKeys();
+
+  const moveChanged = prevW !== engine.keys.KeyW || prevS !== engine.keys.KeyS
+    || prevA !== engine.keys.KeyA || prevD !== engine.keys.KeyD
+    || prevAL !== engine.keys.ArrowLeft || prevAR !== engine.keys.ArrowRight;
+
+  if (engine.grenadeAiming && (e.code === engine.grenadeAimKey || keybinds.matches(e.code, "grenade"))) {
     if (state === "lan") {
       if (lan.canControl && engine.canThrowGrenade()) {
         engine.cancelGrenadeAim();
@@ -847,9 +1084,8 @@ window.addEventListener("keyup", (e) => {
     }
     return;
   }
-  if (!engine.keys[e.code]) return;
-  engine.keys[e.code] = false;
-  if (state === "lan" && lan.canControl) lan.sendInput();
+  if (!wasDown && !moveChanged) return;
+  if (state === "lan" && lan.canControl && moveChanged) lan.sendInput();
 });
 
 function setHudText(node, value) {
@@ -945,7 +1181,7 @@ function updateHUD(dt) {
   hudGrenadeBox.classList.toggle("empty", gCount === 0);
   hudGrenadeBox.classList.toggle("aiming", engine.grenadeAiming);
   if (hudGrenadeKey) {
-    setHudText(hudGrenadeKey, engine.grenadeAiming ? "松开投掷 · 右键取消" : "[G] 手雷");
+    setHudText(hudGrenadeKey, engine.grenadeAiming ? "松开投掷 · 右键取消" : `[${keybinds.getLabel("grenade")}] 手雷`);
   }
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
@@ -963,7 +1199,8 @@ function updateHUD(dt) {
     const unlocked = engine.weapons.isUnlocked(idx);
     slot.classList.toggle("active", idx === engine.weapons.currentIdx);
     slot.classList.toggle("locked", !unlocked);
-    setHudText(slot, unlocked ? WEAPON_SLOT_LABELS[idx] : `${idx + 1}. 🔒 LOCKED`);
+    const k = keybinds.getLabel(`weapon${idx + 1}`);
+    setHudText(slot, unlocked ? WEAPON_SLOT_LABELS[idx] : `${k}. 🔒 LOCKED`);
   });
 
   assets.drawPortrait(portraitCtx, engine.player.hp, engine.player.hurtTimer, engine.player.fireTimer);
@@ -972,6 +1209,7 @@ function updateHUD(dt) {
 
 let lastTime = performance.now();
 let menuOrbitAngle = 0.4;
+const menuOrbitTarget = engine.camera.position.clone();
 let lastRenderedState;
 let lastViewportRevision;
 function loop(now) {
@@ -991,23 +1229,16 @@ function loop(now) {
     updateHUD(dt);
     lan.view.drawLabels(miniCtx);
   } else if (state === "menu" || state === "lan") {
-    // 3A 主界面实时 3D 航拍运镜：隐藏手部武器，实时运行移动平台/激光/道具旋转
+    // 3A 主界面实时 3D 航拍运镜：隐藏手部武器，智能避障环视运行移动平台/激光/道具旋转
     if (engine.weapons.root) engine.weapons.root.visible = false;
+    if (engine.weapons.punchFist) engine.weapons.punchFist.visible = false;
     menuOrbitAngle += dt * 0.16;
     engine.levelTime += dt;
     engine._updateDynamics(dt, [], false);
-    engine._updateProps(dt, false);
+    engine._updateProps(dt, false, false);
 
-    const cx = (engine.mapW * CELL_SIZE) / 2;
-    const cz = (engine.mapH * CELL_SIZE) / 2;
-    const rx = Math.max(8, engine.mapW * CELL_SIZE * 0.28);
-    const rz = Math.max(8, engine.mapH * CELL_SIZE * 0.28);
-    engine.camera.position.set(
-      cx + Math.cos(menuOrbitAngle) * rx,
-      7.2 + Math.sin(menuOrbitAngle * 1.5) * 1.1,
-      cz + Math.sin(menuOrbitAngle) * rz
-    );
-    engine.camera.lookAt(cx, 1.8, cz);
+    engine.computeMenuOrbitCamera(menuOrbitAngle, engine.camera.position, menuOrbitTarget);
+    engine.camera.lookAt(menuOrbitTarget);
     engine.render(engine.movers.length > 0);
   } else if (state !== lastRenderedState || engine.viewportRevision !== lastViewportRevision) {
     engine.render(false);

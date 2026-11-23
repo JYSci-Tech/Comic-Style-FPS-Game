@@ -2163,3 +2163,123 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+
+/* ================= 自定义键位设置弹窗 ================= */
+.keybinds-modal {
+  width: min(820px, 95vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.keybinds-modal .modal-tag,
+.keybinds-modal .modal-title {
+  text-align: center;
+}
+
+.keybinds-status {
+  margin: 0 0 12px;
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--yellow);
+  background: #171824;
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+.keybinds-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+  padding: 4px 4px 8px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 680px) {
+  .keybinds-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kb-group-title {
+  grid-column: 1 / -1;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--ink);
+  padding: 4px 10px;
+  margin-top: 4px;
+  border-left: 6px solid var(--cyan);
+}
+
+.kb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.kb-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kb-label strong {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.kb-label span {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  color: #5b596b;
+}
+
+.kb-key-btn {
+  flex-shrink: 0;
+  min-width: 86px;
+  padding: 5px 10px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.8px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.1s ease, box-shadow 0.1s ease;
+}
+
+.kb-key-btn:hover {
+  background: var(--cyan);
+  transform: translate(-1px, -2px);
+  box-shadow: 4px 5px 0 var(--ink);
+}
+
+.kb-key-btn.listening {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--yellow);
+  box-shadow: 0 0 0 2px var(--ink), 4px 4px 0 var(--ink);
+  animation: kb-listen-pulse 0.55s infinite alternate;
+}
+
+@keyframes kb-listen-pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.06); }
+}
