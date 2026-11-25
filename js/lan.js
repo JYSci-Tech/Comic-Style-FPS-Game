@@ -103,7 +103,7 @@ export class LanClient {
   }
 
   get focused() {
-    return document.pointerLockElement === this.engine.glCanvas;
+    return this.callbacks.isFocused();
   }
 
   get canControl() {
@@ -378,8 +378,9 @@ export class LanClient {
     if (isPlaying) {
       title.textContent = modeName(this.match.mode);
       desc.textContent = this.match.mode === "coop"
-        ? this.engine.level.issue + " · " + this.engine.level.name + "。点击进入战斗锁定鼠标。"
-        : `${this.engine.level.issue} · ${this.engine.level.name} — 率先击倒对手 ${KILL_LIMIT} 次获胜。点击进入战斗锁定鼠标。`;
+        ? this.engine.level.issue + " · " + this.engine.level.name
+        : `${this.engine.level.issue} · ${this.engine.level.name} — 率先击倒对手 ${KILL_LIMIT} 次获胜`;
+      desc.textContent += this.callbacks.touchControls ? "。点击进入战斗后使用触屏操作。" : "。点击进入战斗锁定鼠标。";
     } else if (phase === "cleared") {
       tag.textContent = "STAGE CLEARED!";
       title.textContent = this.engine.level.issue + " 已通关";

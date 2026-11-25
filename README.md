@@ -36,6 +36,13 @@ npm run dev
 
 在包含 `package.json` 的目录运行上述命令。安装依赖后也可以用 `node server.js` 启动。启动后在房主电脑的浏览器打开 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)。
 
+## iPhone 与 GitHub Pages
+
+- 部署后，在 iPhone 的 Safari 中打开站点，点「分享」→「添加到主屏幕」。若系统显示「作为网页 App 打开」，保留该选项。建议使用支持 WebGL 2 和导入映射的新版 Safari（iOS 16.4 或更新版本）。
+- 左下摇杆移动，滑动右半边转动视角。右下按钮控制开火、机瞄、换弹、切枪和身法，右上角暂停。横屏和竖屏均可游玩。
+- GitHub Pages 提供单人战役。局域网合作和对战由房主运行 `npm run dev`，iPhone 通过房主提供的同网地址加入。
+- 本地生成 Pages 产物时运行 `npm ci` 和 `npm run build:pages`，输出位于 `pages-dist/`。仓库所有者在 **Settings → Pages** 将发布来源设为 **GitHub Actions** 后，合入 `main` 的更新会由 **GitHub Pages** 工作流发布。
+
 ## 局域网联机
 
 1. 让 2–4 名玩家连接同一 Wi‑Fi 或有线局域网。房主启动服务，从游戏封面进入「局域网联机」，输入昵称并创建「合作闯关」或「玩家对战」房间。

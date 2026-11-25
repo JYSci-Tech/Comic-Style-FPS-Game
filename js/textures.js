@@ -8,7 +8,8 @@ function filterComicMap(shader) {
 
 // 美式漫画风 Three.js 赛璐璐材质、墨线描边与程序化高清贴图库
 export class ComicAssets {
-  constructor() {
+  constructor({ textureScale = 4 } = {}) {
+    this.textureScale = textureScale;
     this.toonGradient = this._createToonGradient();
     this.inkMaterial = new THREE.MeshBasicMaterial({
       color: 0x0e0e14,
@@ -102,8 +103,8 @@ export class ComicAssets {
     return lines;
   }
 
-  _makeCanvasTex(w, h, drawFn, repeat = false, supersample = 4) {
-    // 4x 超采样 (1024×1024) 矢量渲染 + 16x 各向异性过滤，近距离紧贴建筑墙面也清晰锐利
+  _makeCanvasTex(w, h, drawFn, repeat = false) {
+    const supersample = this.textureScale;
     const c = document.createElement("canvas");
     c.width = w * supersample;
     c.height = h * supersample;
@@ -114,7 +115,7 @@ export class ComicAssets {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 16;
+    tex.anisotropy = supersample === 2 ? 4 : 16;
     if (repeat) {
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;

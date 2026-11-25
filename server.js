@@ -13,7 +13,10 @@ const files = new Map([
   ["/", ["index.html", "text/html"]],
   ["/index.html", ["index.html", "text/html"]],
   ["/style.css", ["style.css", "text/css"]],
-  ...["audio", "engine", "keybinds", "lan", "lan-avatar", "lan-rules", "lan-view", "levels", "main", "scenery", "textures", "weapon-art", "weapons"]
+  ["/mobile.css", ["mobile.css", "text/css"]],
+  ["/manifest.webmanifest", ["manifest.webmanifest", "application/manifest+json"]],
+  ...[180, 192, 512].map((size) => ["/assets/icon-" + size + ".png", ["assets/icon-" + size + ".png", "image/png"]]),
+  ...["audio", "engine", "keybinds", "lan", "lan-avatar", "lan-rules", "lan-view", "levels", "main", "scenery", "textures", "touch-controls", "weapon-art", "weapons"]
     .map((name) => ["/js/" + name + ".js", ["js/" + name + ".js", "text/javascript"]]),
   ["/node_modules/three/build/three.module.js", ["node_modules/three/build/three.module.js", "text/javascript"]],
 ]);
@@ -32,7 +35,7 @@ const server = createServer(async (request, response) => {
   try {
     const data = await readFile(new URL(file[0], import.meta.url));
     response.writeHead(200, {
-      "Content-Type": file[1] + "; charset=utf-8",
+      "Content-Type": file[1] === "image/png" ? file[1] : file[1] + "; charset=utf-8",
       "Content-Length": data.length,
       "Cache-Control": "no-cache",
       "X-Content-Type-Options": "nosniff",

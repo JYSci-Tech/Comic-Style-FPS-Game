@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build:pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",
