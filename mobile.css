@@ -259,6 +259,33 @@
 .has-touch .aaa-menu-btn.primary { font-size: clamp(13px, 2.6vw, 18px); padding: 5px 12px; min-height: 42px; }
 .has-touch .aaa-menu-btn.subtle { width: 100%; }
 
+.mobile-edition .aaa-menu {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-edition .aaa-menu > * { grid-column: 1 / -1; }
+.mobile-edition #btn-guide,
+.mobile-edition #btn-keybinds { grid-column: auto; }
+.mobile-edition #btn-lan {
+  background: var(--cyan);
+  color: var(--ink);
+  min-height: 48px;
+}
+
+.mobile-edition .lan-options { gap: 8px; margin: 10px 0; }
+.mobile-edition .lan-choice { padding: 8px; }
+.mobile-edition .lan-field input { min-height: 44px; font-size: 16px; }
+.mobile-edition #lan-share { margin: 8px 0; }
+.mobile-edition #lan-share-status { display: block; font-size: 13px; }
+.mobile-edition .lan-map-random { min-height: 44px; }
+.mobile-edition .lan-map-grid { max-height: min(34dvh, 240px); }
+
+@media (max-width: 480px) {
+  .mobile-edition .lan-options { grid-template-columns: 1fr; }
+}
+
 .home-screen-hint {
   align-self: center;
   margin: 0;
