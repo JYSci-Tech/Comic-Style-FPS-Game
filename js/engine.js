@@ -46,6 +46,7 @@ export class ComicFPS3DEngine {
     this.audio = audio;
     this.callbacks = callbacks;
     this.mobile = mobile;
+    this.lookSensitivity = 1;
 
     // WebGL 渲染器（原生高清 DPR，抗锯齿）
     if (glCanvas) {
@@ -2428,7 +2429,8 @@ export class ComicFPS3DEngine {
   }
 
   handleMouseMove(dx, dy) {
-    const sens = this.weapons.isScoped() ? 0.0007 : this.weapons.isAds ? 0.0014 : 0.0022;
+    const baseSens = this.weapons.isScoped() ? 0.0007 : this.weapons.isAds ? 0.0014 : 0.0022;
+    const sens = baseSens * this.lookSensitivity;
     this.player.yaw -= dx * sens;
     this.player.pitch = Math.max(-1.35, Math.min(1.35, this.player.pitch - dy * sens));
   }

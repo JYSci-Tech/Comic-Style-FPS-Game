@@ -2165,17 +2165,75 @@ html, body {
 }
 
 
-/* ================= 自定义键位设置弹窗 ================= */
+/* ================= 操作设置弹窗 ================= */
+#keybinds-screen {
+  z-index: 22;
+}
+
 .keybinds-modal {
+  display: flex;
+  flex-direction: column;
   width: min(820px, 95vw);
   max-height: 92vh;
   overflow-y: auto;
   text-align: left;
 }
 
-.keybinds-modal .modal-tag,
+.keybinds-modal .modal-title,
+.keybinds-modal .cover-actions,
+.look-setting,
+.keybinds-status {
+  flex-shrink: 0;
+}
+
 .keybinds-modal .modal-title {
   text-align: center;
+}
+
+.look-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 12px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 3px solid var(--ink);
+  background: #fff;
+}
+
+.look-setting label {
+  font-weight: 900;
+}
+
+.look-setting output {
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.look-setting input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  accent-color: var(--red);
+}
+
+.look-setting p {
+  margin: 0;
+  color: #4d495d;
+  font-size: 13px;
+}
+
+.look-setting .comic-btn {
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.keyboard-bindings {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .keybinds-status {
@@ -2194,6 +2252,7 @@ html, body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 14px;
+  min-height: 0;
   max-height: min(50vh, 420px);
   overflow-y: auto;
   padding: 4px 4px 8px;
