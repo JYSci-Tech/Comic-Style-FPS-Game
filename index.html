@@ -276,11 +276,11 @@
       <nav class="aaa-menu" aria-label="主菜单">
         <button id="btn-continue" class="aaa-menu-btn primary hidden" type="button">继续存档 · ISSUE #2</button>
         <button id="btn-start" class="aaa-menu-btn primary" type="button">开始战役 · ISSUE #1</button>
-        <button id="btn-lan" class="aaa-menu-btn" type="button">局域网联机 · CO-OP / PVP</button>
+        <button id="btn-lan" class="aaa-menu-btn" type="button">多人联机 · 合作 / 对战</button>
         <button id="btn-guide" class="aaa-menu-btn" type="button">操作指南与玩法</button>
         <button id="btn-keybinds" class="aaa-menu-btn" type="button">操作设置</button>
         <button id="btn-toggle-sfx" class="aaa-menu-btn subtle" type="button">音效: 开启</button>
-        <p id="home-screen-hint" class="home-screen-hint hidden">Safari 分享菜单 → 添加到主屏幕</p>
+        <p id="home-screen-hint" class="home-screen-hint hidden">可从浏览器菜单添加到主屏幕</p>
         <p id="startup-error" class="home-screen-hint hidden" role="alert">游戏加载失败。请使用支持 WebGL 2 的新版 Safari 或 Chrome。</p>
       </nav>
     </div>
@@ -309,7 +309,7 @@
               <li><b>真实部位爆头</b>：瞄准头部触发 2.2x 暴击与三格分镜</li>
               <li><b>动态散布与后坐力</b>：静止/机瞄最精准，全屏枪械震感</li>
               <li><b>动态地面补给</b>：医疗包与弹药每隔 20s 动态刷新，临近消失会加速闪烁提示</li>
-              <li><b>高爆 TNT 油桶</b>：连锁爆炸清场；支持 2–4 人局域网联机</li>
+              <li><b>高爆 TNT 油桶</b>：连锁爆炸清场</li>
             </ul>
           </div>
         </div>
@@ -342,7 +342,7 @@
 
     <div id="lan-screen" class="overlay-screen hidden">
       <section class="comic-modal lan-modal" aria-labelledby="lan-title">
-        <h2 id="lan-title" class="modal-title">局域网联机</h2>
+        <h2 id="lan-title" class="modal-title">多人大厅</h2>
         <p id="lan-status" class="lan-status" role="status"></p>
         <div id="lan-entry">
           <label class="lan-field">玩家昵称 <input id="lan-name" maxlength="18" required autocomplete="off"></label>
@@ -355,7 +355,7 @@
             <form id="lan-join" class="lan-choice">
               <h3>加入房间</h3>
               <label class="lan-field">房间码
-                <input id="lan-code" maxlength="5" pattern="[A-Za-z2-9]{5}" placeholder="如 A7K9B" required autocomplete="off">
+                <input id="lan-code" maxlength="5" pattern="[A-Za-z2-9]{5}" placeholder="如 A7K9B" required autocomplete="off" autocapitalize="characters" spellcheck="false">
               </label>
               <button id="lan-join-button" class="comic-btn primary" type="submit" disabled>加入</button>
             </form>
@@ -368,6 +368,8 @@
         <div id="lan-room" class="hidden">
           <h3 id="lan-room-mode"></h3>
           <label class="lan-field">邀请链接 <input id="lan-invite" type="text" readonly></label>
+          <button id="lan-share" class="comic-btn secondary" type="button">邀请队友</button>
+          <span id="lan-share-status" role="status"></span>
           <div id="lan-map-picker" class="lan-map-picker hidden">
             <div class="lan-map-header">
               <span class="lan-map-title">对战地图 · SELECT ARENA</span>

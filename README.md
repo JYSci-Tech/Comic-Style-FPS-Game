@@ -36,6 +36,31 @@ npm run dev
 
 在包含 `package.json` 的目录运行上述命令。安装依赖后也可以用 `node server.js` 启动。启动后在房主电脑的浏览器打开 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)。
 
+## 在自己的服务器上运行手游版
+
+服务器从同一个 Node.js 进程提供游戏页面和多人房间。安装依赖后运行 `npm start`，用手机浏览器打开服务器的 `/mobile/` 路径。首页可进入单人战役或多人大厅，iPhone 也可通过 Safari 分享菜单添加到主屏幕。
+
+在多人大厅选择「合作闯关」或「玩家对战」，点「邀请队友」发送房间链接。队友也可以在同一台服务器输入五位房间码。房间支持 2–4 人，至少两人到齐后由房主开始。
+
+### 使用自己的 HTTPS 域名
+
+假设域名为 `game.example.com`，将 DNS 指向服务器，并让反向代理接收 HTTPS。以下命令适用于 Linux 服务器，在项目目录执行，将域名换成你的实际域名。
+
+```sh
+npm ci --omit=dev
+HOST=127.0.0.1 PORT=8080 PUBLIC_ORIGIN=https://game.example.com npm start
+```
+
+`PUBLIC_ORIGIN` 填写浏览器访问的完整来源（协议、域名以及非默认端口）。后端用它校验联机连接。反向代理应将整个站点转发给 Node，包括 `/mobile/` 和 WebSocket 路径 `/lan`。使用 Caddy 时，可使用以下配置。
+
+```caddyfile
+game.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+部署后的手游入口为 `https://game.example.com/mobile/`。在家中使用同一 Wi-Fi 测试时，可以直接运行 `npm start`，访问 `http://房主的局域网IP:8080/mobile/`。
+
 ## iPhone 与 GitHub Pages
 
 - 部署后，在 iPhone 的 Safari 中打开站点，点「分享」→「添加到主屏幕」。若系统显示「作为网页 App 打开」，保留该选项。建议使用支持 WebGL 2 和导入映射的新版 Safari（iOS 16.4 或更新版本）。

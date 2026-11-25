@@ -9,6 +9,11 @@ import { COMIC_LEVELS } from "./js/levels.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? "0.0.0.0";
+const publicUrl = process.env.PUBLIC_ORIGIN ? new URL(process.env.PUBLIC_ORIGIN) : null;
+if (publicUrl && (!["http:", "https:"].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password ||
+    publicUrl.pathname !== "/" || publicUrl.search || publicUrl.hash)) {
+  throw new Error("PUBLIC_ORIGIN must be an HTTP(S) origin, e.g. https://game.example.com");
+}
 const files = new Map([
   ["/", ["index.html", "text/html"]],
   ["/index.html", ["index.html", "text/html"]],
@@ -27,7 +32,13 @@ const server = createServer(async (request, response) => {
     response.writeHead(405, { Allow: "GET, HEAD" }).end();
     return;
   }
-  const file = files.get(pathname);
+  if (pathname === "/mobile") {
+    response.writeHead(308, { Location: "/mobile/" + request.url.slice(pathname.length) }).end();
+    return;
+  }
+  // Serve the same allowlisted assets relative to the installed mobile app's scope.
+  const resource = pathname.startsWith("/mobile/") ? pathname.slice("/mobile".length) : pathname;
+  const file = files.get(resource);
   if (!file) {
     response.writeHead(404).end();
     return;
@@ -189,7 +200,8 @@ function handleMessage(socket, message, now) {
 }
 
 server.on("upgrade", (request, socket, head) => {
-  if (request.url !== "/lan" || request.headers.origin !== "http://" + request.headers.host || sockets.clients.size >= 64) {
+  const expectedOrigin = publicUrl?.origin ?? ("http://" + request.headers.host);
+  if (request.url !== "/lan" || request.headers.origin !== expectedOrigin || sockets.clients.size >= 64) {
     socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     return;
   }
@@ -201,7 +213,7 @@ sockets.on("connection", (socket) => {
   socket.alive = true;
   socket.lastWindow = performance.now();
   socket.messageCount = 0;
-  send(socket, { type: "hello", id: socket.id, addresses: lanAddresses() });
+  send(socket, { type: "hello", id: socket.id, addresses: publicUrl ? [publicUrl.origin] : lanAddresses() });
   socket.on("pong", () => { socket.alive = true; });
   socket.on("error", () => socket.terminate());
   socket.on("close", () => leave(socket));
@@ -253,6 +265,7 @@ setInterval(() => {
 }, 15000).unref();
 
 server.listen(port, host, () => {
+  console.log("INK & IRON 手游版 " + (publicUrl?.origin ?? ("http://127.0.0.1:" + server.address().port)) + "/mobile/");
   console.log("INK & IRON 本机 http://127.0.0.1:" + server.address().port + "/");
   for (const address of lanAddresses()) console.log("INK & IRON 局域网 " + address);
 });

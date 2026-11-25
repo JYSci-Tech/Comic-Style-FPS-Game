@@ -102,15 +102,17 @@ const hudControlsStrip = document.getElementById("hud-controls-strip");
 const aaaControlsHint = document.getElementById("aaa-controls-hint");
 const guideControlsList = document.getElementById("guide-controls-list");
 
-const hasTouch = prefersTouchControls();
 const pages = document.documentElement.dataset.hosting === "pages";
+const mobileEntry = !pages && ["/mobile/", "/mobile/index.html"].includes(location.pathname);
+const hasTouch = mobileEntry || prefersTouchControls();
 document.documentElement.classList.toggle("has-touch", hasTouch);
+document.documentElement.classList.toggle("mobile-edition", !pages && hasTouch);
 if (pages) {
   document.getElementById("btn-lan").classList.add("hidden");
   document.querySelector(".aaa-issue-pill").textContent = COMIC_LEVELS.length + " ISSUES · SOLO";
-  if (hasTouch && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches) {
-    document.getElementById("home-screen-hint").classList.remove("hidden");
-  }
+}
+if (hasTouch && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches) {
+  document.getElementById("home-screen-hint").classList.remove("hidden");
 }
 if (hasTouch) document.getElementById("pause-desc").textContent = "轻触继续，回到战斗。";
 const audio = new ComicAudio();

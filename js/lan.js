@@ -53,6 +53,7 @@ export class LanClient {
       if (this.name.reportValidity()) this.send({ type: "join", name: this.name.value, code: this.code.value });
     });
     element("lan-invite").addEventListener("focus", (event) => event.currentTarget.select());
+    element("lan-share").addEventListener("click", () => this.shareInvite());
     for (const [button, type] of [["lan-start", "start"], ["lan-leave", "leave"], ["lan-exit", "leave"],
       ["lan-next", "next"], ["lan-retry", "retry"], ["lan-return", "lobby"]]) {
       element(button).addEventListener("click", () => this.send({ type }));
@@ -131,7 +132,7 @@ export class LanClient {
 
   connect() {
     if (this.socket && this.socket.readyState < WebSocket.CLOSING) return;
-    this.status.textContent = "正在连接局域网服务…";
+    this.status.textContent = "正在连接联机服务器…";
     this.setConnected(false);
     show(element("lan-reconnect"), false);
     const url = new URL("/lan", location.href);
@@ -154,7 +155,7 @@ export class LanClient {
       this.setConnected(false);
       this.status.textContent = wasConnected
         ? "连接已中断。重新连接后可加入房间。"
-        : "连接失败。请确认房主已运行联机服务，并从房主提供的地址打开游戏。";
+        : "连接失败，请检查网络和服务器地址后重试。";
       show(element("lan-reconnect"), true);
     });
   }
@@ -194,15 +195,17 @@ export class LanClient {
     show(element("lan-room"), Boolean(this.room));
     show(element("lan-entry"), !this.room);
     if (!this.room) {
-      if (this.id) this.status.textContent = "同一网络下的 2–4 名玩家可以一起游戏。";
+      if (this.id) this.status.textContent = "创建房间，或输入房间码加入。支持 2–4 人。";
       return;
     }
     const { code, mode, members, host, note, mapIndex = 0 } = this.room;
     this.code.value = code;
     element("lan-room-mode").textContent = modeName(mode) + " · " + code;
     const localHostname = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-    const invite = new URL(localHostname && this.addresses.length ? this.addresses[0] : "/", location.href);
+    const origin = localHostname && this.addresses.length ? this.addresses[0] : location.origin;
+    const invite = new URL(this.callbacks.touchControls ? "/mobile/" : "/", origin);
     invite.searchParams.set("room", code);
+    if (element("lan-invite").value !== invite.href) element("lan-share-status").textContent = "";
     element("lan-invite").value = invite.href;
     const isPvp = mode === "pvp";
     const picker = element("lan-map-picker");
@@ -236,6 +239,30 @@ export class LanClient {
     const rule = mode === "coop" ? `组队完成 ${COMIC_LEVELS.length} 期关卡` : "率先击倒对手 10 次获胜";
     this.status.textContent = note || (members.length < 2 ? "把邀请链接发给队友，至少两人即可开始。"
       : members.length + "/" + ROOM_SIZE + " 人 · " + rule + (this.isHost ? "" : " · 等待房主开始"));
+  }
+
+  async shareInvite() {
+    const field = element("lan-invite");
+    const status = element("lan-share-status");
+    const url = field.value;
+    if (!this.room || !url) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "墨水与钢铁 · " + modeName(this.room.mode), url });
+        return;
+      } catch (error) {
+        if (error.name === "AbortError") return;
+      }
+    }
+    if (field.value !== url || !this.room) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      status.textContent = "邀请链接已复制";
+    } catch {
+      field.focus();
+      field.select();
+      status.textContent = "长按选中的链接即可复制";
+    }
   }
 
   applySnapshot(snapshot) {
