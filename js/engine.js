@@ -38,13 +38,14 @@ export function createPlayer() {
 
 // 真 3D Three.js 美式漫画风 FPS 引擎（赛璐璐着色 + 墨线描边 + 真实爆头判定 + 3D 弹幕与特效）
 export class ComicFPS3DEngine {
-  constructor(glCanvas, fxCanvas, assets, audio, callbacks = {}) {
+  constructor(glCanvas, fxCanvas, assets, audio, callbacks = {}, { mobile = false } = {}) {
     this.glCanvas = glCanvas;
     this.fxCanvas = fxCanvas;
     this.fxCtx = fxCanvas?.getContext("2d");
     this.assets = assets;
     this.audio = audio;
     this.callbacks = callbacks;
+    this.mobile = mobile;
 
     // WebGL 渲染器（原生高清 DPR，抗锯齿）
     if (glCanvas) {
@@ -146,19 +147,23 @@ export class ComicFPS3DEngine {
     if (glCanvas) {
       this._handleResize();
       window.addEventListener("resize", () => this._handleResize());
+      if (mobile && typeof ResizeObserver !== "undefined") {
+        this.viewportObserver = new ResizeObserver(() => this._handleResize());
+        this.viewportObserver.observe(glCanvas.parentElement);
+      }
     }
   }
 
   _handleResize() {
-    const w = window.innerWidth;
-    const h = Math.max(1, window.innerHeight);
+    const w = this.glCanvas.parentElement?.clientWidth || window.innerWidth;
+    const h = this.glCanvas.parentElement?.clientHeight || Math.max(1, window.innerHeight);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     if (this.weaponCamera) {
       this.weaponCamera.aspect = w / h;
       this.weaponCamera.updateProjectionMatrix();
     }
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, this.mobile ? 1.35 : 2);
     const renderDpr = Math.min(dpr, Math.max(1, Math.sqrt(MAX_RENDER_PIXELS / (w * h))));
     this.renderer.setDrawingBufferSize(w, h, renderDpr);
     this.fxCanvas.width = Math.floor(w * renderDpr);
@@ -361,7 +366,8 @@ export class ComicFPS3DEngine {
     sun.castShadow = true;
     const d = Math.max(40, maxSpan * 0.65);
     const shadow = sun.shadow;
-    shadow.mapSize.set(1024, 1024);
+    const shadowSize = this.mobile ? 512 : 1024;
+    shadow.mapSize.set(shadowSize, shadowSize);
     shadow.bias = -0.00008;
     shadow.normalBias = 0.06;
     Object.assign(shadow.camera, { near: 5, far: Math.max(115, maxSpan * 1.85), left: -d, right: d, top: d, bottom: -d });
@@ -3912,7 +3918,7 @@ export class ComicFPS3DEngine {
     const now = performance.now();
     if (updateShadows && now >= this.nextShadowUpdate) {
       this.renderer.shadowMap.needsUpdate = true;
-      this.nextShadowUpdate = now + SHADOW_INTERVAL_MS;
+      this.nextShadowUpdate = now + (this.mobile ? 50 : SHADOW_INTERVAL_MS);
     }
     this.renderer.render(this.scene, this.camera);
     const showWeapons = Boolean(this.weapons?.root?.visible || this.weapons?.punchFist?.visible);

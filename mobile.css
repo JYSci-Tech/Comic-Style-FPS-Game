@@ -1,0 +1,185 @@
+:root {
+  --safe-top: max(12px, env(safe-area-inset-top));
+  --safe-right: max(12px, env(safe-area-inset-right));
+  --safe-bottom: max(12px, env(safe-area-inset-bottom));
+  --safe-left: max(12px, env(safe-area-inset-left));
+}
+
+.has-touch #game-shell {
+  height: 100dvh;
+  overscroll-behavior: none;
+}
+
+.touch-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  pointer-events: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-look {
+  position: absolute;
+  inset: 0 0 0 32%;
+  pointer-events: auto;
+}
+
+.touch-stick {
+  position: absolute;
+  width: clamp(90px, 26vmin, 132px);
+  aspect-ratio: 1;
+  left: var(--safe-left);
+  bottom: var(--safe-bottom);
+  border: 2px solid #fff8e799;
+  border-radius: 50%;
+  background: #100e1678;
+  pointer-events: auto;
+}
+
+.touch-stick span {
+  position: absolute;
+  inset: 27%;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--cyan);
+  transform: translate(var(--stick-x, 0px), var(--stick-y, 0px));
+  pointer-events: none;
+}
+
+.touch-actions {
+  position: absolute;
+  right: var(--safe-right);
+  bottom: var(--safe-bottom);
+  display: grid;
+  grid-template-columns: repeat(3, clamp(44px, 13vmin, 57px));
+  gap: 5px;
+}
+
+.touch-controls button {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0;
+  border: 2px solid #fff8e799;
+  border-radius: 9px;
+  background: #151524dc;
+  color: var(--paper);
+  font: 700 12px var(--font-body);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.touch-controls button.held,
+.touch-controls button[aria-pressed="true"] {
+  background: var(--cyan);
+  color: var(--ink);
+}
+
+.touch-controls .touch-fire {
+  background: var(--yellow);
+  border-color: var(--ink);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.touch-controls .touch-pause {
+  position: absolute;
+  right: var(--safe-right);
+  top: var(--safe-top);
+  width: 44px;
+  font-size: 19px;
+}
+
+.has-touch .hud {
+  inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+.has-touch .hud-top-right { right: 51px; }
+.has-touch .hud-bottom-left { bottom: calc(clamp(90px, 26vmin, 132px) + 7px); }
+.has-touch .hud-bottom-right { bottom: 145px; }
+.has-touch .hud-top-center { top: 54px; max-width: min(48vw, 250px); }
+.has-touch .portrait-box,
+.has-touch .score-box,
+.has-touch .weapon-slots,
+.has-touch .controls-strip,
+.has-touch .aaa-footer,
+.has-touch #btn-keybinds,
+.has-touch #btn-keybinds-pause { display: none; }
+
+.has-touch .hud .comic-box {
+  border-width: 2px;
+  padding: 3px 5px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.has-touch .issue-badge { min-width: 0; max-width: 42vw; }
+.has-touch .issue-title,
+.has-touch .objective-box,
+.has-touch .weapon-name { font-size: 11px; }
+.has-touch .ammo-readout { font-size: 18px; }
+.has-touch .stats-box { min-width: 0; width: 108px; }
+.has-touch .minimap-box canvas { width: 62px; height: 62px; }
+.has-touch .lan-scoreboard { max-width: 94px; font-size: 10px; }
+
+.has-touch .overlay-screen {
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+.has-touch .comic-modal {
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+  padding: 15px;
+  touch-action: pan-y;
+}
+
+.has-touch .modal-title { font-size: clamp(25px, 5vw, 37px); }
+.has-touch .cover-actions { gap: 8px; }
+.has-touch .comic-btn { padding: 8px 12px; font-size: 15px; min-height: 44px; }
+
+.has-touch .aaa-title-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .85fr);
+  align-items: center;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.has-touch .aaa-brand,
+.has-touch .aaa-menu {
+  position: static;
+  max-width: none;
+  width: 100%;
+}
+
+.has-touch .aaa-logo {
+  font-size: clamp(39px, 8vw, 73px);
+  -webkit-text-stroke-width: 2px;
+  text-shadow: 4px 4px 0 var(--ink), 7px 7px 0 var(--red);
+}
+
+.has-touch .aaa-kicker { gap: 4px; }
+.has-touch .aaa-pub,
+.has-touch .aaa-issue-pill { padding: 3px 6px; font-size: 10px; }
+.has-touch .aaa-tagline { font-size: 12px; padding: 4px 8px; }
+.has-touch .aaa-menu { gap: 6px; }
+.has-touch .aaa-menu-btn,
+.has-touch .aaa-menu-btn.primary { font-size: clamp(13px, 2.6vw, 18px); padding: 5px 12px; min-height: 42px; }
+.has-touch .aaa-menu-btn.subtle { width: 100%; }
+
+.home-screen-hint {
+  align-self: center;
+  margin: 0;
+  padding: 5px 8px;
+  background: var(--ink);
+  color: var(--paper);
+  font: 700 12px var(--font-body);
+  text-align: center;
+}
+
+@media (orientation: portrait) {
+  .has-touch .aaa-title-screen { grid-template-columns: 1fr; align-content: center; gap: 25px; }
+  .has-touch .aaa-brand { text-align: center; }
+  .has-touch .aaa-kicker { justify-content: center; }
+  .has-touch .aaa-menu { max-width: 380px; margin-inline: auto; }
+}

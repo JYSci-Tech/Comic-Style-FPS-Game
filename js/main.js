@@ -6,6 +6,7 @@ import { KeybindManager, KEYBIND_ACTIONS, formatKeyCode } from "./keybinds.js";
 import { LanClient } from "./lan.js";
 import { KILL_LIMIT } from "./lan-rules.js";
 import { getWeaponArtSVG } from "./weapon-art.js";
+import { TouchControls, prefersTouchControls } from "./touch-controls.js";
 
 const SAVE_KEY = "ink_and_iron_checkpoint_v1";
 
@@ -95,10 +96,23 @@ const hudControlsStrip = document.getElementById("hud-controls-strip");
 const aaaControlsHint = document.getElementById("aaa-controls-hint");
 const guideControlsList = document.getElementById("guide-controls-list");
 
+const hasTouch = prefersTouchControls();
+const pages = document.documentElement.dataset.hosting === "pages";
+document.documentElement.classList.toggle("has-touch", hasTouch);
+if (pages) {
+  document.getElementById("btn-lan").classList.add("hidden");
+  document.querySelector(".aaa-issue-pill").textContent = COMIC_LEVELS.length + " ISSUES · SOLO";
+  if (hasTouch && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches) {
+    document.getElementById("home-screen-hint").classList.remove("hidden");
+  }
+}
+if (hasTouch) document.getElementById("pause-desc").textContent = "轻触继续，回到战斗。";
 const audio = new ComicAudio();
-const assets = new ComicAssets();
+const assets = new ComicAssets({ textureScale: hasTouch ? 2 : 4 });
 const keybinds = new KeybindManager();
 const pressedCodes = new Set();
+let touchDirections = 0;
+let touchFocused = false;
 let listeningAction = null;
 let keybindsReturnTarget = "menu";
 
@@ -314,7 +328,7 @@ const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
     unlockPointer();
     showEndScreen(false);
   },
-});
+}, { mobile: hasTouch });
 
 // ================= 按局存档系统（localStorage） =================
 function buildCheckpointData(levelIdx) {
@@ -395,7 +409,39 @@ const initialSave = readSavedCheckpoint();
 engine.loadLevel(initialSave ? initialSave.levelIdx : 0, false);
 refreshCoverSaveUI();
 
-const lan = new LanClient(engine, {
+const touch = hasTouch ? new TouchControls(document.getElementById("touch-controls"), {
+  move(left, right, forward, back) {
+    const next = Number(left) | (Number(right) << 1) | (Number(forward) << 2) | (Number(back) << 3);
+    if (next === touchDirections) return;
+    touchDirections = next;
+    syncMovementKeys();
+    if (state === "lan" && lan.canControl) lan.sendInput();
+  },
+  look(dx, dy) {
+    if (state !== "playing" && !(state === "lan" && lan.canControl)) return;
+    engine.handleMouseMove(dx * 2.1, dy * 2.1);
+  },
+  press(action) {
+    if (action === "pause") {
+      suspendTouchGame();
+    } else if (state === "playing" || (state === "lan" && lan.canControl)) {
+      if (action === "fire") setFiring(true);
+      else if (action === "aim") setAiming(!engine.weapons.isAds);
+      else if (action === "weapon") cycleWeapons(1);
+      else runGameplayAction(action, "TouchGrenade");
+    }
+  },
+  release(action, canceled) {
+    if (action === "fire") setFiring(false);
+    if (action === "grenade" && engine.grenadeAimKey === "TouchGrenade") {
+      if (canceled) engine.cancelGrenadeAim();
+      else finishGrenadeAim();
+    }
+  },
+}) : null;
+const touchAim = document.querySelector('[data-touch="aim"]');
+
+const lan = pages ? null : new LanClient(engine, {
   onOpen() {
     state = "lan";
     engine.weapons.setUnlocked([true, true, true, true]);
@@ -414,20 +460,38 @@ const lan = new LanClient(engine, {
   },
   lockPointer,
   unlockPointer,
+  touchControls: hasTouch,
+  isFocused: () => hasTouch ? touchFocused : document.pointerLockElement === glCanvas,
 });
 
 function lockPointer() {
+  if (hasTouch) {
+    touchFocused = true;
+    if (state === "lan") lan.pointerChanged();
+    return;
+  }
   if (glCanvas.requestPointerLock) {
     try {
-      glCanvas.requestPointerLock()?.catch(() => lan.pointerError());
+      glCanvas.requestPointerLock()?.catch(() => lan?.pointerError());
     } catch (_) {}
   }
 }
 
 function unlockPointer() {
+  if (hasTouch) {
+    touchFocused = false;
+    touch.setActive(false);
+    return;
+  }
   if (document.pointerLockElement && document.exitPointerLock) {
     document.exitPointerLock();
   }
+}
+
+function suspendTouchGame() {
+  unlockPointer();
+  if (state === "lan") lan.pointerChanged();
+  else pauseGame();
 }
 
 function syncMovementKeys() {
@@ -436,10 +500,10 @@ function syncMovementKeys() {
   const arrowLeftUsed = keybinds.isBound("ArrowLeft");
   const arrowRightUsed = keybinds.isBound("ArrowRight");
 
-  engine.keys.KeyW = pressedCodes.has(keybinds.get("moveForward")) || (!arrowUpUsed && pressedCodes.has("ArrowUp"));
-  engine.keys.KeyS = pressedCodes.has(keybinds.get("moveBackward")) || (!arrowDownUsed && pressedCodes.has("ArrowDown"));
-  engine.keys.KeyA = pressedCodes.has(keybinds.get("moveLeft"));
-  engine.keys.KeyD = pressedCodes.has(keybinds.get("moveRight"));
+  engine.keys.KeyW = Boolean(touchDirections & 4) || pressedCodes.has(keybinds.get("moveForward")) || (!arrowUpUsed && pressedCodes.has("ArrowUp"));
+  engine.keys.KeyS = Boolean(touchDirections & 8) || pressedCodes.has(keybinds.get("moveBackward")) || (!arrowDownUsed && pressedCodes.has("ArrowDown"));
+  engine.keys.KeyA = Boolean(touchDirections & 1) || pressedCodes.has(keybinds.get("moveLeft"));
+  engine.keys.KeyD = Boolean(touchDirections & 2) || pressedCodes.has(keybinds.get("moveRight"));
   engine.keys.ArrowUp = !arrowUpUsed && pressedCodes.has("ArrowUp");
   engine.keys.ArrowDown = !arrowDownUsed && pressedCodes.has("ArrowDown");
   engine.keys.ArrowLeft = !arrowLeftUsed && pressedCodes.has("ArrowLeft");
@@ -447,11 +511,19 @@ function syncMovementKeys() {
 }
 
 function clearPressedInputs() {
+  touch?.reset();
   pressedCodes.clear();
+  touchDirections = 0;
   engine.keys = {};
 }
 
 function refreshKeybindHints() {
+  if (hasTouch) {
+    guideControlsList.innerHTML = '<li><b>左下摇杆</b> 移动</li><li><b>屏幕右侧滑动</b> 转动视角</li>'
+      + '<li><b>轻触机瞄</b> 开关瞄准，按住开火按钮即可连续射击全自动武器</li>'
+      + '<li><b>长按手雷</b> 预览轨迹，松开投掷</li><li><b>右上角</b> 暂停</li>';
+    return;
+  }
   const kFwd = keybinds.getLabel("moveForward");
   const kBack = keybinds.getLabel("moveBackward");
   const kLeft = keybinds.getLabel("moveLeft");
@@ -868,6 +940,7 @@ btnToggleSfx.addEventListener("click", () => {
 });
 
 document.addEventListener("pointerlockchange", () => {
+  if (hasTouch) return;
   if (state === "lan") {
     lan.pointerChanged();
     return;
@@ -880,7 +953,10 @@ document.addEventListener("pointerlockchange", () => {
     }
   }
 });
-document.addEventListener("pointerlockerror", () => lan.pointerError());
+document.addEventListener("pointerlockerror", () => lan?.pointerError());
+document.addEventListener("visibilitychange", () => {
+  if (hasTouch && document.hidden && touchFocused) suspendTouchGame();
+});
 window.addEventListener("blur", () => {
   engine.cancelGrenadeAim();
   clearPressedInputs();
@@ -932,61 +1008,91 @@ refreshKeybindHints();
 glCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 glCanvas.addEventListener("mousedown", (e) => {
-  if (state === "lan") {
-    if (!lan.canControl) return;
-    if (engine.grenadeAiming) {
-      if (e.button === 2) engine.cancelGrenadeAim();
-      return;
-    }
-    if (e.button === 0) {
-      engine.mouseDown = true;
-      lan.action("fire");
-    } else if (e.button === 2) {
-      engine.setAds(true);
-      lan.sendInput();
-    }
-    return;
-  }
-  if (state !== "playing") return;
-  if (document.pointerLockElement !== glCanvas) {
-    lockPointer();
-  }
-  if (engine.grenadeAiming) {
-    if (e.button === 2) engine.cancelGrenadeAim();
-    return;
-  }
-  if (e.button === 0) {
-    engine.mouseDown = true;
-    engine.fireWeapon();
-  } else if (e.button === 2) {
-    engine.setAds(true);
-  }
+  if (hasTouch || (state !== "playing" && !(state === "lan" && lan.canControl))) return;
+  if (state === "playing" && document.pointerLockElement !== glCanvas) lockPointer();
+  if (e.button === 0) setFiring(true);
+  else if (e.button === 2) setAiming(true);
 });
 
 window.addEventListener("mouseup", (e) => {
-  if (state === "lan" && !lan.canControl) return;
-  if (e.button === 0) engine.mouseDown = false;
-  else if (e.button === 2) engine.setAds(false);
-  if (state === "lan" && (e.button === 0 || e.button === 2)) lan.sendInput();
+  if (hasTouch) return;
+  if (e.button === 0) setFiring(false);
+  else if (e.button === 2) setAiming(false);
 });
 
 window.addEventListener("mousemove", (e) => {
-  if ((state === "playing" && document.pointerLockElement === glCanvas) || (state === "lan" && lan.canControl)) {
+  if (!hasTouch && ((state === "playing" && document.pointerLockElement === glCanvas) || (state === "lan" && lan.canControl))) {
     engine.handleMouseMove(e.movementX, e.movementY);
   }
 });
 
-window.addEventListener("wheel", (e) => {
+window.addEventListener("wheel", (e) => cycleWeapons(e.deltaY > 0 ? 1 : -1));
+
+function setFiring(down) {
+  if (down && engine.grenadeAiming) return;
+  engine.mouseDown = down;
   if (state === "lan" && lan.canControl) {
+    if (down) lan.action("fire");
+    else lan.sendInput();
+  } else if (down && state === "playing") engine.fireWeapon();
+}
+
+function setAiming(down) {
+  if (down && engine.grenadeAiming) {
     engine.cancelGrenadeAim();
-    lan.weapon = (lan.weapon + (e.deltaY > 0 ? 1 : 3)) % 4;
-    lan.sendInput();
     return;
   }
-  if (state !== "playing") return;
-  engine.cancelGrenadeAim();
-  engine.weapons.cycle(e.deltaY > 0 ? 1 : -1);
-});
+  engine.setAds(down);
+  if (state === "lan" && lan.canControl) lan.sendInput();
+}
+
+function cycleWeapons(direction) {
+  if (state === "lan" && lan.canControl) {
+    engine.cancelGrenadeAim();
+    const count = engine.weapons.weapons.length;
+    lan.weapon = (lan.weapon + direction + count) % count;
+    lan.sendInput();
+  } else if (state === "playing") {
+    engine.cancelGrenadeAim();
+    engine.weapons.cycle(direction);
+  }
+}
+
+const localActions = {
+  reload: () => engine.weapons.startReload(),
+  dash: () => engine.triggerDash(),
+  slide: () => engine.triggerSlide(),
+  jump: () => engine.triggerJump(),
+  melee: () => engine.triggerMeleePunch(),
+};
+
+function runGameplayAction(action, code) {
+  const inLan = state === "lan";
+  if (/^weapon[1-4]$/.test(action || "")) {
+    engine.cancelGrenadeAim();
+    const index = Number(action.slice(-1)) - 1;
+    if (inLan) {
+      lan.weapon = index;
+      lan.sendInput();
+    } else engine.weapons.select(index);
+  } else if (action === "grenade") {
+    if (!engine.grenadeAiming && engine.startGrenadeAim(code) && inLan) lan.sendInput();
+  } else if (action === "toggleMute") {
+    btnToggleSfx.textContent = audio.toggle() ? "音效: 开启" : "音效: 关闭";
+  } else if (Object.hasOwn(localActions, action)) {
+    if (inLan) lan.action(action);
+    else localActions[action]();
+  } else return false;
+  return true;
+}
+
+function finishGrenadeAim() {
+  if (state === "lan" && lan.canControl && engine.canThrowGrenade()) {
+    engine.cancelGrenadeAim();
+    lan.action("grenade");
+  } else if (state === "playing") engine.releaseGrenadeAim();
+  else engine.cancelGrenadeAim();
+}
 
 window.addEventListener("keydown", (e) => {
   if (keybindsScreen && !keybindsScreen.classList.contains("hidden")) return;
@@ -1007,51 +1113,9 @@ window.addEventListener("keydown", (e) => {
     || prevA !== engine.keys.KeyA || prevD !== engine.keys.KeyD
     || prevAL !== engine.keys.ArrowLeft || prevAR !== engine.keys.ArrowRight;
   const action = keybinds.getActionForCode(e.code);
-
-  if (state === "lan") {
-    if (e.repeat) {
-      if (moveChanged) lan.sendInput();
-      return;
-    }
-    if (action === "weapon1" || action === "weapon2" || action === "weapon3" || action === "weapon4") {
-      engine.cancelGrenadeAim();
-      lan.weapon = Number(action.slice(-1)) - 1;
-      lan.sendInput();
-    } else if (action === "reload") lan.action("reload");
-    else if (action === "dash") lan.action("dash");
-    else if (action === "slide") lan.action("slide");
-    else if (action === "jump") lan.action("jump");
-    else if (action === "grenade") {
-      if (!engine.grenadeAiming && engine.startGrenadeAim(e.code)) {
-        lan.sendInput();
-      }
-    } else if (action === "melee") lan.action("melee");
-    else if (action === "toggleMute") {
-      btnToggleSfx.textContent = engine.audio.toggle() ? "音效: 开启" : "音效: 关闭";
-    } else if (moveChanged) {
-      lan.sendInput();
-    }
-    return;
-  }
-
-  if (action === "weapon1") { engine.cancelGrenadeAim(); engine.weapons.select(0); }
-  else if (action === "weapon2") { engine.cancelGrenadeAim(); engine.weapons.select(1); }
-  else if (action === "weapon3") { engine.cancelGrenadeAim(); engine.weapons.select(2); }
-  else if (action === "weapon4") { engine.cancelGrenadeAim(); engine.weapons.select(3); }
-  else if (action === "reload") engine.weapons.startReload();
-  else if (action === "dash") engine.triggerDash();
-  else if (action === "slide") engine.triggerSlide();
-  else if (action === "jump") engine.triggerJump();
-  else if (action === "grenade") {
-    if (!e.repeat && !engine.grenadeAiming) {
-      engine.startGrenadeAim(e.code);
-    }
-  } else if (action === "melee") {
-    engine.triggerMeleePunch();
-  } else if (action === "toggleMute") {
-    const on = audio.toggle();
-    btnToggleSfx.textContent = on ? "音效: 开启" : "音效: 关闭";
-  }
+  const handleAction = !e.repeat || (state === "playing" && action !== "grenade");
+  if (handleAction && runGameplayAction(action, e.code)) return;
+  if (state === "lan" && moveChanged) lan.sendInput();
 });
 
 window.addEventListener("keyup", (e) => {
@@ -1070,18 +1134,7 @@ window.addEventListener("keyup", (e) => {
     || prevAL !== engine.keys.ArrowLeft || prevAR !== engine.keys.ArrowRight;
 
   if (engine.grenadeAiming && (e.code === engine.grenadeAimKey || keybinds.matches(e.code, "grenade"))) {
-    if (state === "lan") {
-      if (lan.canControl && engine.canThrowGrenade()) {
-        engine.cancelGrenadeAim();
-        lan.action("grenade");
-      } else {
-        engine.cancelGrenadeAim();
-      }
-    } else if (state === "playing") {
-      engine.releaseGrenadeAim();
-    } else {
-      engine.cancelGrenadeAim();
-    }
+    finishGrenadeAim();
     return;
   }
   if (!wasDown && !moveChanged) return;
@@ -1181,7 +1234,9 @@ function updateHUD(dt) {
   hudGrenadeBox.classList.toggle("empty", gCount === 0);
   hudGrenadeBox.classList.toggle("aiming", engine.grenadeAiming);
   if (hudGrenadeKey) {
-    setHudText(hudGrenadeKey, engine.grenadeAiming ? "松开投掷 · 右键取消" : `[${keybinds.getLabel("grenade")}] 手雷`);
+    const grenadeHint = hasTouch ? "手雷" : `[${keybinds.getLabel("grenade")}] 手雷`;
+    const aimHint = hasTouch ? "松开投掷" : "松开投掷 · 右键取消";
+    setHudText(hudGrenadeKey, engine.grenadeAiming ? aimHint : grenadeHint);
   }
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
@@ -1215,6 +1270,11 @@ let lastViewportRevision;
 function loop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
+  if (touch) {
+    touch.setActive(touchFocused && (state === "playing" || (state === "lan" && lan.canControl)));
+    const aiming = String(engine.weapons.isAds);
+    if (touchAim.getAttribute("aria-pressed") !== aiming) touchAim.setAttribute("aria-pressed", aiming);
+  }
 
   if (state === "playing") {
     if (engine.weapons.root) engine.weapons.root.visible = true;
