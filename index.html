@@ -177,20 +177,84 @@
       </div>
     </div>
 
+    <svg class="touch-icon-library" width="0" height="0" aria-hidden="true" focusable="false">
+      <symbol id="touch-icon-dash" viewBox="0 0 24 24">
+        <circle cx="15.5" cy="4.5" r="1.75" />
+        <path d="m4 10 4-2h4l2.5 3H20M12 8l-3 6 5 2-2 5m-3-7-3 4H2" />
+      </symbol>
+      <symbol id="touch-icon-pause" viewBox="0 0 24 24">
+        <path d="M8 5v14M16 5v14" stroke-width="3.2" />
+      </symbol>
+      <symbol id="touch-icon-aim" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="7" />
+        <path d="M12 2v5m0 10v5M2 12h5m10 0h5m-10 0h.01" />
+      </symbol>
+      <symbol id="touch-icon-fire" viewBox="0 0 24 24">
+        <path d="m7 15 7.3-7.3c1.8-1.8 4.2-2.7 7-2.8-.1 2.8-1 5.2-2.8 7L11.2 19.2zM11.4 10.6l4.2 4.2M5 13.4l-2 2m2.2 2-2.9 2.9m6-1.1-2.1 2.1" />
+      </symbol>
+      <symbol id="touch-icon-melee" viewBox="0 0 24 24">
+        <path d="M7.5 20v-2.5L4 14v-2.5a2 2 0 0 1 2-2h1V7a1.75 1.75 0 1 1 3.5 0V5.5a1.75 1.75 0 1 1 3.5 0V7a1.75 1.75 0 0 1 3.5 0v2a1.75 1.75 0 0 1 3.5 0v5.5l-3.5 3V20zM7 9.5h6a1.75 1.75 0 0 1 0 3.5h-2l2 2m4.5-6v3.5" />
+      </symbol>
+      <symbol id="touch-icon-slide" viewBox="0 0 24 24">
+        <circle cx="12.5" cy="6" r="1.75" />
+        <path d="m6 10 4.5 1.5 1.5 4.5 4-3 4 2m-8 1 5 2.5h5M3 14h3m-4 5h7" />
+      </symbol>
+      <symbol id="touch-icon-jump" viewBox="0 0 24 24">
+        <path d="M12 4v12M7 9l5-5 5 5M4 20h16" />
+      </symbol>
+      <symbol id="touch-icon-grenade" viewBox="0 0 24 24">
+        <path d="M8 9V6h7v3m-4-3V3h3l5 3 2 4" />
+        <path d="M11.5 8.5c3.7 0 6.5 3 6.5 6.7 0 3.6-2.8 6.3-6.5 6.3S5 18.8 5 15.2c0-3.7 2.8-6.7 6.5-6.7Z" />
+        <path d="M8 13h7m-7 4h7m-3.5-5.5V19" />
+      </symbol>
+      <symbol id="touch-icon-weapon" viewBox="0 0 24 24">
+        <path d="M3 7h17l-3.5-3.5M21 17H4l3.5 3.5" />
+      </symbol>
+      <symbol id="touch-icon-reload" viewBox="0 0 24 24">
+        <path d="M20.6 8a8.8 8.8 0 1 0 .3 7m-.3-11v4h-4" />
+        <path d="M10 16v-5l2-3 2 3v5z" />
+      </symbol>
+    </svg>
     <div id="touch-controls" class="touch-controls hidden" aria-label="触屏操作">
       <div class="touch-look" data-touch="look" aria-hidden="true"></div>
       <div class="touch-stick" data-touch="move" aria-label="移动摇杆"><span></span></div>
-      <button class="touch-pause" data-touch="pause" type="button" aria-label="暂停">Ⅱ</button>
-      <div class="touch-actions">
-        <button data-touch="slide" type="button">滑铲</button>
-        <button data-touch="dash" type="button">冲刺</button>
-        <button data-touch="jump" type="button">跳跃</button>
-        <button data-touch="grenade" type="button">手雷</button>
-        <button data-touch="melee" type="button">近战</button>
-        <button data-touch="aim" type="button" aria-pressed="false">机瞄</button>
-        <button data-touch="weapon" type="button">切枪</button>
-        <button data-touch="reload" type="button">换弹</button>
-        <button class="touch-fire" data-touch="fire" type="button">开火</button>
+      <button class="touch-dash" data-touch="dash" type="button" aria-label="冲刺">
+        <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-dash" /></svg>
+      </button>
+      <button class="touch-pause" data-touch="pause" type="button" aria-label="暂停">
+        <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-pause" /></svg>
+      </button>
+      <div class="touch-aim-fire">
+        <button data-touch="aim" type="button" aria-label="机瞄" aria-pressed="false">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-aim" /></svg>
+        </button>
+        <button class="touch-fire" data-touch="fire" type="button" aria-label="开火">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-fire" /></svg>
+        </button>
+      </div>
+      <div class="touch-maneuvers">
+        <button data-touch="melee" type="button" aria-label="近战">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-melee" /></svg>
+        </button>
+        <button data-touch="slide" type="button" aria-label="滑铲">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-slide" /></svg>
+        </button>
+        <button data-touch="jump" type="button" aria-label="跳跃">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-jump" /></svg>
+        </button>
+      </div>
+      <div class="touch-equipment">
+        <button data-touch="grenade" type="button" aria-label="手雷" aria-describedby="touch-grenade-count">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-grenade" /></svg>
+          <span id="touch-grenade-count" class="touch-detail">×1</span>
+        </button>
+        <button class="touch-weapon" data-touch="weapon" type="button" aria-label="切枪" aria-describedby="touch-ammo">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-weapon" /></svg>
+          <span id="touch-ammo" class="touch-detail">6/∞</span>
+        </button>
+        <button data-touch="reload" type="button" aria-label="换弹">
+          <svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-reload" /></svg>
+        </button>
       </div>
     </div>
 
@@ -214,7 +278,7 @@
         <button id="btn-start" class="aaa-menu-btn primary" type="button">开始战役 · ISSUE #1</button>
         <button id="btn-lan" class="aaa-menu-btn" type="button">局域网联机 · CO-OP / PVP</button>
         <button id="btn-guide" class="aaa-menu-btn" type="button">操作指南与玩法</button>
-        <button id="btn-keybinds" class="aaa-menu-btn" type="button">键位设置 · KEYBINDS</button>
+        <button id="btn-keybinds" class="aaa-menu-btn" type="button">操作设置</button>
         <button id="btn-toggle-sfx" class="aaa-menu-btn subtle" type="button">音效: 开启</button>
         <p id="home-screen-hint" class="home-screen-hint hidden">Safari 分享菜单 → 添加到主屏幕</p>
         <p id="startup-error" class="home-screen-hint hidden" role="alert">游戏加载失败。请使用支持 WebGL 2 的新版 Safari 或 Chrome。</p>
@@ -253,13 +317,22 @@
       </div>
     </div>
 
-    <!-- 自定义键位设置弹窗 -->
+    <!-- 操作设置 -->
     <div id="keybinds-screen" class="overlay-screen hidden">
       <section class="comic-modal keybinds-modal" aria-labelledby="keybinds-title">
-        <div class="modal-tag">CONTROLS · KEYBINDS</div>
-        <h2 id="keybinds-title" class="modal-title">键位设置</h2>
-        <p id="keybinds-status" class="keybinds-status">点击任意按键框后按下新键即可绑定 · ESC 取消</p>
-        <div id="keybinds-list" class="keybinds-list"></div>
+        <h2 id="keybinds-title" class="modal-title">操作设置</h2>
+        <div class="look-setting">
+          <label for="look-sensitivity">全局灵敏度</label>
+          <output id="look-sensitivity-value" for="look-sensitivity" aria-hidden="true">100%</output>
+          <input id="look-sensitivity" type="range" min="25" max="300" step="5" value="100"
+            aria-valuetext="100%" aria-describedby="look-sensitivity-desc" />
+          <p id="look-sensitivity-desc">调整转动视角的速度，适用于腰射、机瞄和狙击开镜。</p>
+          <button id="btn-look-reset" class="comic-btn secondary" type="button">恢复 100%</button>
+        </div>
+        <div class="keyboard-bindings">
+          <p id="keybinds-status" class="keybinds-status">点击任意按键框后按下新键即可绑定 · ESC 取消</p>
+          <div id="keybinds-list" class="keybinds-list"></div>
+        </div>
         <div class="cover-actions">
           <button id="btn-keybinds-reset" class="comic-btn secondary" type="button">恢复默认键位</button>
           <button id="btn-keybinds-close" class="comic-btn primary" type="button">完成并返回</button>
@@ -321,6 +394,7 @@
         <p id="lan-match-wait" class="result-wait-hint hidden"></p>
         <div id="lan-match-actions" class="cover-actions">
           <button id="lan-focus" class="comic-btn primary" type="button">进入战斗</button>
+          <button id="lan-controls" class="comic-btn secondary" type="button">操作设置</button>
           <button id="lan-next" class="comic-btn primary hidden" type="button">进入下一期</button>
           <button id="lan-retry" class="comic-btn primary hidden" type="button">重开本关</button>
           <button id="lan-return" class="comic-btn secondary hidden" type="button">返回房间</button>
@@ -370,7 +444,7 @@
         <p id="pause-desc" class="modal-desc">点击继续即可重新锁定鼠标并回到战斗。</p>
         <div class="cover-actions">
           <button id="btn-resume" class="comic-btn primary">继续战斗</button>
-          <button id="btn-keybinds-pause" class="comic-btn secondary" type="button">键位设置</button>
+          <button id="btn-keybinds-pause" class="comic-btn secondary" type="button">操作设置</button>
           <button id="btn-retry-pause" class="comic-btn secondary">重开本关</button>
           <button id="btn-restart-pause" class="comic-btn secondary">回到第 1 期</button>
           <button id="btn-home-pause" class="comic-btn secondary">回到首页</button>

@@ -347,6 +347,7 @@ export class LanClient {
     show(this.matchScreen, Boolean(phase) && (!isPlaying || !this.focused));
     if (!phase) return;
     show(element("lan-focus"), isPlaying);
+    show(element("lan-controls"), isPlaying);
     show(element("lan-next"), phase === "cleared" && this.isHost);
     show(element("lan-retry"), phase === "failed" && this.isHost);
     show(element("lan-return"), !isPlaying && this.isHost);

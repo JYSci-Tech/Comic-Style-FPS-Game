@@ -56,9 +56,15 @@ export class TouchControls {
     if (!pointer) return;
     const dx = event.clientX - pointer.x;
     const dy = event.clientY - pointer.y;
-    if (pointer.action === "move") this.updateStick(dx, dy, pointer.radius);
-    else if (pointer.action === "look") {
-      this.callbacks.look(dx, dy);
+    if (pointer.action === "move") {
+      this.updateStick(dx, dy, pointer.radius);
+      return;
+    }
+    const isLook = pointer.action === "look";
+    if (isLook || pointer.action === "fire" || pointer.action === "aim" || pointer.action === "grenade") {
+      // A finger already dragging the scene takes precedence over drags on action buttons.
+      const hasLook = !isLook && [...this.pointers.values()].some((input) => input.action === "look");
+      if (!hasLook) this.callbacks.look(dx, dy);
       pointer.x = event.clientX;
       pointer.y = event.clientY;
     }

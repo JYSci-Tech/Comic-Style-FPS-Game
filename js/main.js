@@ -9,6 +9,7 @@ import { getWeaponArtSVG } from "./weapon-art.js";
 import { TouchControls, prefersTouchControls } from "./touch-controls.js";
 
 const SAVE_KEY = "ink_and_iron_checkpoint_v1";
+const LOOK_SENSITIVITY_KEY = "ink_and_iron_look_sensitivity_v1";
 
 const gameShell = document.getElementById("game-shell");
 const glCanvas = document.getElementById("game-canvas");
@@ -69,6 +70,9 @@ const hudReloadHint = document.getElementById("hud-reload-hint");
 const hudGrenadeBox = document.getElementById("hud-grenade-box");
 const hudGrenadeKey = document.getElementById("hud-grenade-key");
 const hudGrenadeCount = document.getElementById("hud-grenade-count");
+const touchAmmo = document.getElementById("touch-ammo");
+const touchWeapon = touchAmmo.closest("button");
+const touchGrenadeCount = document.getElementById("touch-grenade-count");
 const weaponSlots = Array.from(document.querySelectorAll(".w-slot"));
 
 const btnContinue = document.getElementById("btn-continue");
@@ -92,6 +96,8 @@ const btnHomeEnd = document.getElementById("btn-home-end");
 const keybindsScreen = document.getElementById("keybinds-screen");
 const keybindsStatus = document.getElementById("keybinds-status");
 const keybindsList = document.getElementById("keybinds-list");
+const lookSensitivity = document.getElementById("look-sensitivity");
+const lookSensitivityValue = document.getElementById("look-sensitivity-value");
 const hudControlsStrip = document.getElementById("hud-controls-strip");
 const aaaControlsHint = document.getElementById("aaa-controls-hint");
 const guideControlsList = document.getElementById("guide-controls-list");
@@ -114,7 +120,7 @@ const pressedCodes = new Set();
 let touchDirections = 0;
 let touchFocused = false;
 let listeningAction = null;
-let keybindsReturnTarget = "menu";
+let controlsOpener = null;
 
 let state = "menu"; // menu | playing | paused | intermission | weaponselect | gameover | victory | lan
 let hitmarkerTimer = 0;
@@ -235,6 +241,7 @@ function triggerAmmoGainAnim(gains) {
   void hudAmmoBox?.offsetWidth;
   hudAmmoBox?.classList.add("ammo-gain-active");
   hudAmmoGain?.classList.add("active");
+  if (hasTouch) touchWeapon.classList.add("ammo-gain-active");
 
   if (curGain > 0 && Number.isFinite(engine.weapons.current.reserve)) {
     if (displayedAmmoRes >= engine.weapons.current.reserve) {
@@ -259,6 +266,7 @@ function triggerAmmoGainAnim(gains) {
   ammoPickupTimeout = setTimeout(() => {
     hudAmmoBox?.classList.remove("ammo-gain-active");
     hudAmmoGain?.classList.remove("active");
+    if (hasTouch) touchWeapon.classList.remove("ammo-gain-active");
   }, 950);
 }
 
@@ -329,6 +337,25 @@ const engine = new ComicFPS3DEngine(glCanvas, fxCanvas, assets, audio, {
     showEndScreen(false);
   },
 }, { mobile: hasTouch });
+
+function applyLookSensitivity() {
+  engine.lookSensitivity = lookSensitivity.valueAsNumber / 100;
+  const label = `${lookSensitivity.value}%`;
+  lookSensitivityValue.value = label;
+  lookSensitivity.setAttribute("aria-valuetext", label);
+}
+
+function saveLookSensitivity() {
+  try {
+    localStorage.setItem(LOOK_SENSITIVITY_KEY, lookSensitivity.value);
+  } catch (_) {}
+}
+
+try {
+  const stored = localStorage.getItem(LOOK_SENSITIVITY_KEY);
+  if (stored?.trim() && Number.isFinite(Number(stored))) lookSensitivity.value = stored;
+} catch (_) {}
+applyLookSensitivity();
 
 // ================= 按局存档系统（localStorage） =================
 function buildCheckpointData(levelIdx) {
@@ -519,9 +546,15 @@ function clearPressedInputs() {
 
 function refreshKeybindHints() {
   if (hasTouch) {
-    guideControlsList.innerHTML = '<li><b>左下摇杆</b> 移动</li><li><b>屏幕右侧滑动</b> 转动视角</li>'
-      + '<li><b>轻触机瞄</b> 开关瞄准，按住开火按钮即可连续射击全自动武器</li>'
-      + '<li><b>长按手雷</b> 预览轨迹，松开投掷</li><li><b>右上角</b> 暂停</li>';
+    const icon = (action) => `<svg class="touch-icon" aria-hidden="true"><use href="#touch-icon-${action}"></use></svg>`;
+    guideControlsList.innerHTML = `
+      <li><b>左下摇杆</b> 移动，${icon("dash")} 冲刺</li>
+      <li><b>滑动屏幕空白处</b> 转动视角</li>
+      <li>${icon("aim")} 机瞄，${icon("fire")} 开火，按住也能拖动瞄准</li>
+      <li>${icon("melee")} 近战，${icon("slide")} 滑铲，${icon("jump")} 跳跃</li>
+      <li>${icon("grenade")} 按住手雷拖动预瞄，松开投掷</li>
+      <li>${icon("weapon")} 切枪，${icon("reload")} 换弹</li>
+      <li>${icon("pause")} 暂停，可在操作设置中调整全局灵敏度</li>`;
     return;
   }
   const kFwd = keybinds.getLabel("moveForward");
@@ -567,7 +600,7 @@ function refreshKeybindHints() {
 }
 
 function renderKeybindsList() {
-  if (!keybindsList) return;
+  if (hasTouch || !keybindsList) return;
   const groups = [
     { id: "move", title: "移动与身法 · MOVEMENT" },
     { id: "combat", title: "战斗与武器 · COMBAT" },
@@ -615,8 +648,8 @@ function renderKeybindsList() {
   keybindsList.replaceChildren(...nodes);
 }
 
-function openKeybinds(from = "menu") {
-  keybindsReturnTarget = from;
+function openKeybinds(event) {
+  controlsOpener = event.currentTarget;
   listeningAction = null;
   clearPressedInputs();
   if (keybindsStatus) {
@@ -625,19 +658,23 @@ function openKeybinds(from = "menu") {
   renderKeybindsList();
   pauseScreen.classList.add("hidden");
   keybindsScreen.classList.remove("hidden");
+  lookSensitivity.focus({ preventScroll: true });
 }
 
 function closeKeybinds() {
   listeningAction = null;
   keybindsScreen.classList.add("hidden");
-  if (keybindsReturnTarget === "pause" && state === "paused") {
+  if (controlsOpener === btnKeybindsPause && state === "paused") {
     pauseScreen.classList.remove("hidden");
   }
+  controlsOpener?.focus({ preventScroll: true });
+  controlsOpener = null;
 }
 
 function hideAllScreens() {
   clearResultDelay();
   listeningAction = null;
+  controlsOpener = null;
   gameShell.classList.remove("defeat-monochrome");
   startScreen.classList.add("hidden");
   guideScreen.classList.add("hidden");
@@ -886,8 +923,16 @@ btnContinue.addEventListener("click", continueSavedGame);
 btnStart.addEventListener("click", startNewGame);
 btnGuide.addEventListener("click", () => guideScreen.classList.remove("hidden"));
 btnGuideClose.addEventListener("click", () => guideScreen.classList.add("hidden"));
-btnKeybinds?.addEventListener("click", () => openKeybinds("menu"));
-btnKeybindsPause?.addEventListener("click", () => openKeybinds("pause"));
+btnKeybinds?.addEventListener("click", openKeybinds);
+btnKeybindsPause?.addEventListener("click", openKeybinds);
+document.getElementById("lan-controls").addEventListener("click", openKeybinds);
+lookSensitivity.addEventListener("input", applyLookSensitivity);
+lookSensitivity.addEventListener("change", saveLookSensitivity);
+document.getElementById("btn-look-reset").addEventListener("click", () => {
+  lookSensitivity.value = lookSensitivity.defaultValue;
+  applyLookSensitivity();
+  saveLookSensitivity();
+});
 btnKeybindsReset?.addEventListener("click", () => {
   audio.init();
   audio.playReload();
@@ -1225,18 +1270,21 @@ function updateHUD(dt) {
     ammoRollTimer = 0;
   }
 
-  setHudText(hudWeaponName, w.name);
-  setHudText(hudAmmoCur, w.ammo);
-  setHudText(hudAmmoRes, w.reserve === Infinity ? "∞" : Math.round(displayedAmmoRes));
-
+  const reserve = w.reserve === Infinity ? "∞" : Math.round(displayedAmmoRes);
   const gCount = Math.max(0, engine.player.grenades || 0);
-  setHudText(hudGrenadeCount, `x${gCount}`);
-  hudGrenadeBox.classList.toggle("empty", gCount === 0);
-  hudGrenadeBox.classList.toggle("aiming", engine.grenadeAiming);
-  if (hudGrenadeKey) {
-    const grenadeHint = hasTouch ? "手雷" : `[${keybinds.getLabel("grenade")}] 手雷`;
-    const aimHint = hasTouch ? "松开投掷" : "松开投掷 · 右键取消";
-    setHudText(hudGrenadeKey, engine.grenadeAiming ? aimHint : grenadeHint);
+  if (hasTouch) {
+    setHudText(touchAmmo, `${w.ammo}/${reserve}`);
+    setHudText(touchGrenadeCount, `×${gCount}`);
+  } else {
+    setHudText(hudWeaponName, w.name);
+    setHudText(hudAmmoCur, w.ammo);
+    setHudText(hudAmmoRes, reserve);
+    setHudText(hudGrenadeCount, `x${gCount}`);
+    hudGrenadeBox.classList.toggle("empty", gCount === 0);
+    hudGrenadeBox.classList.toggle("aiming", engine.grenadeAiming);
+    if (hudGrenadeKey) {
+      setHudText(hudGrenadeKey, engine.grenadeAiming ? "松开投掷 · 右键取消" : `[${keybinds.getLabel("grenade")}] 手雷`);
+    }
   }
 
   const isReloading = engine.weapons.reloading && engine.weapons.reloadTimer > 0;
